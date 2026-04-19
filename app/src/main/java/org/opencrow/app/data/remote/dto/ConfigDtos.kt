@@ -13,7 +13,8 @@ data class UserConfigDto(
     val prompts: PromptsDto?,
     val memory: MemoryDto?,
     val schedules: SchedulesDto?,
-    val heartbeat: HeartbeatDto?
+    val heartbeat: HeartbeatDto?,
+    val updatedAt: String? = null
 )
 
 data class IntegrationsDto(

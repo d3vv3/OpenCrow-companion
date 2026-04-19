@@ -65,6 +65,12 @@ class SettingsViewModel(
         }
     }
 
+    /** Force-refresh from the server, replacing any local edits. */
+    fun refreshFromServer() {
+        _uiState.update { it.copy(loading = true) }
+        loadConfig()
+    }
+
     fun setActiveTab(tab: String) {
         _uiState.update { it.copy(activeTab = tab) }
     }
@@ -74,7 +80,7 @@ class SettingsViewModel(
     }
 
     fun updateConfig(config: UserConfigDto) {
-        _uiState.update { it.copy(config = config) }
+        _uiState.update { it.copy(config = config, saveStatus = null) }
     }
 
     fun saveConfig() {
@@ -83,7 +89,13 @@ class SettingsViewModel(
         viewModelScope.launch {
             val result = configRepository.saveServerConfig(cfg)
             if (result != null) {
-                _uiState.update { it.copy(config = result, saving = false, saveStatus = "Saved") }
+                _uiState.update {
+                    it.copy(
+                        config = result,
+                        saving = false,
+                        saveStatus = "Saved"
+                    )
+                }
             } else {
                 _uiState.update { it.copy(saving = false, error = "Save failed") }
             }
