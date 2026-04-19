@@ -23,6 +23,7 @@ import org.opencrow.app.OpenCrowApp
 import org.opencrow.app.ui.screens.chat.components.HistorySheet
 import org.opencrow.app.ui.screens.chat.components.MessageBubble
 import org.opencrow.app.ui.screens.chat.components.ThinkingBubble
+import org.opencrow.app.ui.screens.chat.components.ToolCallBubble
 import org.opencrow.app.ui.theme.LocalSpacing
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -161,10 +162,17 @@ fun ChatScreen(
                             verticalArrangement = Arrangement.spacedBy(spacing.sm)
                         ) {
                             items(state.messages, key = { it.id }) { msg ->
-                                MessageBubble(
-                                    message = msg,
-                                    isTranscribed = msg.id in state.transcribedMessageIds
-                                )
+                                val toolCalls = state.toolCallsByMessageId[msg.id]
+                                Column(verticalArrangement = Arrangement.spacedBy(spacing.sm)) {
+                                    // Show tool calls before the assistant response
+                                    if (msg.role == "assistant" && !toolCalls.isNullOrEmpty()) {
+                                        ToolCallBubble(toolCalls = toolCalls)
+                                    }
+                                    MessageBubble(
+                                        message = msg,
+                                        isTranscribed = msg.id in state.transcribedMessageIds
+                                    )
+                                }
                             }
                             if (state.sending) {
                                 item { ThinkingBubble() }

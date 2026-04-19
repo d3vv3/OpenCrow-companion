@@ -33,7 +33,31 @@ data class CompleteResponse(
     val provider: String?,
     val output: String,
     val attempts: Int?,
+    val trace: CompletionTraceDto?,
     val usage: TokenUsageDto?
+)
+data class CompletionTraceDto(
+    val providerAttempts: List<ProviderAttemptDto>?,
+    val toolCalls: List<ToolCallDto>?,
+    val runtimeActions: List<RuntimeActionDto>?
+)
+data class ProviderAttemptDto(
+    val provider: String,
+    val attempt: Int,
+    val success: Boolean,
+    val error: String?
+)
+data class ToolCallDto(
+    val name: String,
+    val arguments: Map<String, Any>?,
+    val status: String,
+    val output: String?
+)
+data class RuntimeActionDto(
+    val kind: String,
+    val command: String?,
+    val status: String,
+    val output: String?
 )
 data class TokenUsageDto(
     val promptTokens: Int,

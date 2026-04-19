@@ -17,6 +17,7 @@ import okhttp3.MultipartBody
 import okhttp3.RequestBody.Companion.asRequestBody
 import org.opencrow.app.data.remote.dto.ConversationDto
 import org.opencrow.app.data.remote.dto.MessageDto
+import org.opencrow.app.data.remote.dto.ToolCallDto
 import org.opencrow.app.data.repository.ConversationRepository
 import java.io.File
 import java.text.SimpleDateFormat
@@ -33,7 +34,8 @@ data class ChatUiState(
     val showSystemChats: Boolean = false,
     val recording: Boolean = false,
     val transcribing: Boolean = false,
-    val transcribedMessageIds: Set<String> = emptySet()
+    val transcribedMessageIds: Set<String> = emptySet(),
+    val toolCallsByMessageId: Map<String, List<ToolCallDto>> = emptyMap()
 )
 
 class ChatViewModel(
@@ -174,14 +176,21 @@ class ChatViewModel(
                         createdAt = now
                     )
 
+                    val toolCalls = response.trace?.toolCalls.orEmpty()
+
                     _uiState.update { state ->
                         val newTranscribed = if (isTranscribed) {
                             state.transcribedMessageIds + tempMsg.id
                         } else state.transcribedMessageIds
 
+                        val newToolCalls = if (toolCalls.isNotEmpty()) {
+                            state.toolCallsByMessageId + (assistantMsg.id to toolCalls)
+                        } else state.toolCallsByMessageId
+
                         state.copy(
                             messages = state.messages + assistantMsg,
                             transcribedMessageIds = newTranscribed,
+                            toolCallsByMessageId = newToolCalls,
                             conversations = state.conversations.map { conv ->
                                 if (conv.id == convId) conv.copy(updatedAt = now) else conv
                             }.sortedByDescending { it.updatedAt }
