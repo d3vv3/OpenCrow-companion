@@ -131,6 +131,17 @@ class ApiClient(private val configDao: ConfigDao) {
         }
     }
 
+    suspend fun clearTokens() {
+        configDao.delete("server")
+        configDao.delete("accessToken")
+        configDao.delete("refreshToken")
+        configDao.delete("deviceId")
+        _api = null
+        _baseUrl = null
+        _accessToken = null
+        _refreshToken = null
+    }
+
     suspend fun persistCurrentTokens() {
         val access = _accessToken ?: return
         val refresh = _refreshToken ?: return

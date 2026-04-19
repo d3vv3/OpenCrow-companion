@@ -125,7 +125,8 @@ fun SettingsScreen(
                             connectionValid = state.connectionValid,
                             validating = state.validating,
                             onValidateConnection = { viewModel.validateConnection() },
-                            onScanNewQr = onUnpaired
+                            onScanNewQr = onUnpaired,
+                            onLogout = { viewModel.logout { onUnpaired() } }
                         )
                         else -> ServerConfigTab(
                             tab = state.activeTab,

@@ -40,6 +40,10 @@ class ConfigRepository(
         configDao.set(AppConfig(key, value))
     }
 
+    suspend fun logout() {
+        apiClient.clearTokens()
+    }
+
     suspend fun validateConnection(): Boolean {
         return try {
             val health = apiClient.api.health()

@@ -2,6 +2,7 @@ package org.opencrow.app.ui.screens.settings
 
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Logout
 import androidx.compose.material.icons.outlined.QrCodeScanner
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
@@ -19,7 +20,8 @@ fun LocalSettingsTab(
     connectionValid: Boolean?,
     validating: Boolean,
     onValidateConnection: () -> Unit,
-    onScanNewQr: () -> Unit
+    onScanNewQr: () -> Unit,
+    onLogout: () -> Unit
 ) {
     val spacing = LocalSpacing.current
     val intervals = listOf("10", "30", "60")
@@ -46,17 +48,35 @@ fun LocalSettingsTab(
                     Text("Scan New Pairing QR")
                 }
 
-                Button(
-                    onClick = onValidateConnection,
-                    enabled = !validating,
-                    colors = ButtonDefaults.filledTonalButtonColors(),
-                    shape = MaterialTheme.shapes.small,
-                    modifier = Modifier.fillMaxWidth()
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(spacing.sm)
                 ) {
-                    if (validating) {
-                        CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
-                    } else {
-                        Text("Validate Connection")
+                    Button(
+                        onClick = onValidateConnection,
+                        enabled = !validating,
+                        colors = ButtonDefaults.filledTonalButtonColors(),
+                        shape = MaterialTheme.shapes.small,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        if (validating) {
+                            CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                        } else {
+                            Text("Validate Connection")
+                        }
+                    }
+
+                    Button(
+                        onClick = onLogout,
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.errorContainer,
+                            contentColor = MaterialTheme.colorScheme.onErrorContainer
+                        ),
+                        shape = MaterialTheme.shapes.small
+                    ) {
+                        Icon(Icons.Outlined.Logout, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(spacing.xs))
+                        Text("Logout")
                     }
                 }
 

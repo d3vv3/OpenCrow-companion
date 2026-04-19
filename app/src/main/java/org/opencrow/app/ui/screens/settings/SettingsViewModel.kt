@@ -125,6 +125,13 @@ class SettingsViewModel(
         }
     }
 
+    fun logout(onDone: () -> Unit) {
+        viewModelScope.launch {
+            configRepository.logout()
+            onDone()
+        }
+    }
+
     fun validateConnection() {
         _uiState.update { it.copy(validating = true) }
         viewModelScope.launch {
