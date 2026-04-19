@@ -52,6 +52,24 @@ class ChatViewModel(
 
     init {
         loadConversations()
+        observeRefreshSignal()
+    }
+
+    private fun observeRefreshSignal() {
+        viewModelScope.launch {
+            repository.refreshSignal.collect {
+                refreshConversations()
+            }
+        }
+    }
+
+    fun refreshConversations() {
+        viewModelScope.launch {
+            val (_, fresh) = repository.loadConversations()
+            if (fresh != null) {
+                _uiState.update { it.copy(conversations = fresh) }
+            }
+        }
     }
 
     private fun loadConversations() {
@@ -100,6 +118,7 @@ class ChatViewModel(
 
     fun toggleHistory(show: Boolean) {
         _uiState.update { it.copy(showHistory = show) }
+        if (show) refreshConversations()
     }
 
     fun toggleSystemChats(show: Boolean) {

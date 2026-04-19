@@ -54,6 +54,8 @@ class HeartbeatWorker(
             completeTasks(apiClient, tasks, response)
             apiClient.persistCurrentTokens()
 
+            app.container.conversationRepository.notifyConversationsChanged()
+
             return Result.success()
         } catch (e: Exception) {
             Log.e(TAG, "Heartbeat failed", e)

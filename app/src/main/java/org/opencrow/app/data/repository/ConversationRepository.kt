@@ -1,6 +1,9 @@
 package org.opencrow.app.data.repository
 
 import android.util.Log
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import org.opencrow.app.data.local.ConversationDao
 import org.opencrow.app.data.local.MessageDao
 import org.opencrow.app.data.mapper.toCached
@@ -15,6 +18,13 @@ class ConversationRepository(
 ) {
     companion object {
         private const val TAG = "ConversationRepo"
+    }
+
+    private val _refreshSignal = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+    val refreshSignal: SharedFlow<Unit> = _refreshSignal.asSharedFlow()
+
+    fun notifyConversationsChanged() {
+        _refreshSignal.tryEmit(Unit)
     }
 
     /**
