@@ -63,6 +63,9 @@ dependencies {
     implementation(libs.okhttp.sse)
     implementation(libs.gson)
 
+    // Image loading
+    implementation(libs.coil.compose)
+
     // CameraX + ML Kit for QR scanning
     implementation(libs.camerax.core)
     implementation(libs.camerax.camera2)

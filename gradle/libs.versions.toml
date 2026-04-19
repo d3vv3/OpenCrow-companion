@@ -43,6 +43,7 @@ camerax-lifecycle = { group = "androidx.camera", name = "camera-lifecycle", vers
 camerax-view = { group = "androidx.camera", name = "camera-view", version.ref = "camerax" }
 zxing-core = { group = "com.google.zxing", name = "core", version.ref = "zxing" }
 gson = { group = "com.google.code.gson", name = "gson", version = "2.11.0" }
+coil-compose = { group = "io.coil-kt", name = "coil-compose", version = "2.7.0" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

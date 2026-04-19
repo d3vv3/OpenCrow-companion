@@ -2,16 +2,20 @@ package org.opencrow.app.ui.screens.chat
 
 import android.content.Context
 import android.media.MediaRecorder
+import android.net.Uri
 import android.os.Build
+import android.util.Base64
 import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.MultipartBody
 import okhttp3.RequestBody.Companion.asRequestBody
@@ -24,6 +28,14 @@ import org.opencrow.app.data.repository.ConversationRepository
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.*
+
+data class Attachment(
+    val id: String = UUID.randomUUID().toString(),
+    val uri: Uri,
+    val name: String,
+    val mimeType: String?,
+    val isImage: Boolean = mimeType?.startsWith("image/") == true
+)
 
 data class ChatUiState(
     val conversations: List<ConversationDto> = emptyList(),
@@ -39,11 +51,14 @@ data class ChatUiState(
     val recording: Boolean = false,
     val transcribing: Boolean = false,
     val transcribedMessageIds: Set<String> = emptySet(),
-    val toolCallsByMessageId: Map<String, List<ToolCallDto>> = emptyMap()
+    val toolCallsByMessageId: Map<String, List<ToolCallDto>> = emptyMap(),
+    val attachments: List<Attachment> = emptyList(),
+    val attachmentsByMessageId: Map<String, List<Attachment>> = emptyMap()
 )
 
 class ChatViewModel(
-    private val repository: ConversationRepository
+    private val repository: ConversationRepository,
+    private val appContext: Context
 ) : ViewModel() {
 
     companion object {
@@ -182,6 +197,20 @@ class ChatViewModel(
         _uiState.update { it.copy(composing = text) }
     }
 
+    fun addAttachments(newAttachments: List<Attachment>) {
+        _uiState.update { it.copy(attachments = it.attachments + newAttachments) }
+    }
+
+    fun removeAttachment(id: String) {
+        _uiState.update { state ->
+            state.copy(attachments = state.attachments.filter { it.id != id })
+        }
+    }
+
+    fun clearAttachments() {
+        _uiState.update { it.copy(attachments = emptyList()) }
+    }
+
     fun toggleHistory(show: Boolean) {
         _uiState.update { it.copy(showHistory = show) }
         if (show) refreshConversations()
@@ -193,9 +222,11 @@ class ChatViewModel(
 
     fun sendMessage(text: String = _uiState.value.composing, isTranscribed: Boolean = false) {
         val trimmed = text.trim()
-        if (trimmed.isBlank() || _uiState.value.sending) return
+        val pendingAttachments = _uiState.value.attachments
+        if (trimmed.isBlank() && pendingAttachments.isEmpty()) return
+        if (_uiState.value.sending) return
 
-        _uiState.update { it.copy(sending = true, composing = "") }
+        _uiState.update { it.copy(sending = true, composing = "", attachments = emptyList()) }
 
         viewModelScope.launch {
             try {
@@ -204,7 +235,11 @@ class ChatViewModel(
 
                 // Create conversation if needed
                 if (convId == null) {
-                    val newConv = repository.createConversation(trimmed.take(50))
+                    val title = trimmed.take(50).ifBlank {
+                        if (pendingAttachments.isNotEmpty()) "Shared ${pendingAttachments.size} file(s)"
+                        else "New conversation"
+                    }
+                    val newConv = repository.createConversation(title)
                     if (newConv != null) {
                         convId = newConv.id
                         _uiState.update {
@@ -219,23 +254,46 @@ class ChatViewModel(
                     }
                 }
 
+                // Build message content with embedded attachments
+                val messageContent = buildMessageWithAttachments(trimmed, pendingAttachments)
+
+                // Display-friendly content for the optimistic message (no base64 blobs)
+                // Images are rendered visually via attachmentsByMessageId, so only show file names
+                val displayContent = buildString {
+                    if (trimmed.isNotBlank()) append(trimmed)
+                    for (att in pendingAttachments.filter { !it.isImage }) {
+                        if (isNotEmpty()) append("\n")
+                        append("📎 ${att.name}")
+                    }
+                }
+
                 // Optimistic user message
                 val tempMsg = MessageDto(
                     id = "temp-${System.currentTimeMillis()}",
                     conversationId = convId,
                     role = "user",
-                    content = trimmed,
+                    content = displayContent,
                     createdAt = now
                 )
                 if (isTranscribed) {
                     _uiState.update {
                         it.copy(
                             messages = it.messages + tempMsg,
-                            transcribedMessageIds = it.transcribedMessageIds + tempMsg.id
+                            transcribedMessageIds = it.transcribedMessageIds + tempMsg.id,
+                            attachmentsByMessageId = if (pendingAttachments.isNotEmpty())
+                                it.attachmentsByMessageId + (tempMsg.id to pendingAttachments)
+                            else it.attachmentsByMessageId
                         )
                     }
                 } else {
-                    _uiState.update { it.copy(messages = it.messages + tempMsg) }
+                    _uiState.update {
+                        it.copy(
+                            messages = it.messages + tempMsg,
+                            attachmentsByMessageId = if (pendingAttachments.isNotEmpty())
+                                it.attachmentsByMessageId + (tempMsg.id to pendingAttachments)
+                            else it.attachmentsByMessageId
+                        )
+                    }
                 }
 
                 // Streaming assistant message placeholder
@@ -259,7 +317,7 @@ class ChatViewModel(
                 val streamToolCalls = mutableListOf<ToolCallDto>()
                 var pendingToolCall: String? = null
 
-                repository.streamMessage(convId, trimmed).collect { event ->
+                repository.streamMessage(convId, messageContent).collect { event ->
                     when (event) {
                         is StreamEvent.Delta -> {
                             _uiState.update { state ->
@@ -366,6 +424,46 @@ class ChatViewModel(
         }
     }
 
+    /**
+     * Builds the final message content by embedding image attachments as
+     * markdown data-URI images. The server's OpenAI provider parses
+     * `![name](data:image/...;base64,...)` into multimodal content blocks.
+     */
+    private suspend fun buildMessageWithAttachments(
+        text: String,
+        attachments: List<Attachment>
+    ): String {
+        if (attachments.isEmpty()) return text
+
+        val parts = mutableListOf<String>()
+        if (text.isNotBlank()) parts.add(text)
+
+        for (attachment in attachments) {
+            if (attachment.isImage) {
+                val dataUri = withContext(Dispatchers.IO) {
+                    try {
+                        val bytes = appContext.contentResolver.openInputStream(attachment.uri)?.use {
+                            it.readBytes()
+                        } ?: return@withContext null
+                        val base64 = Base64.encodeToString(bytes, Base64.NO_WRAP)
+                        val mime = attachment.mimeType ?: "image/png"
+                        "data:$mime;base64,$base64"
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Failed to read attachment ${attachment.name}", e)
+                        null
+                    }
+                }
+                if (dataUri != null) {
+                    parts.add("![${attachment.name}]($dataUri)")
+                }
+            } else {
+                parts.add("[Attached file: ${attachment.name}]")
+            }
+        }
+
+        return parts.joinToString("\n\n")
+    }
+
     @Suppress("UNCHECKED_CAST")
     private fun parseToolArguments(json: String): Map<String, Any>? {
         return try {
@@ -431,10 +529,10 @@ class ChatViewModel(
         } catch (_: Exception) {}
     }
 
-    class Factory(private val repository: ConversationRepository) : ViewModelProvider.Factory {
+    class Factory(private val repository: ConversationRepository, private val appContext: Context) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T {
-            return ChatViewModel(repository) as T
+            return ChatViewModel(repository, appContext) as T
         }
     }
 }

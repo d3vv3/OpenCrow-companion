@@ -2,10 +2,19 @@ package org.opencrow.app.ui.screens.chat
 
 import android.Manifest
 import android.content.pm.PackageManager
+import android.provider.OpenableColumns
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.outlined.*
@@ -21,6 +30,7 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
 import org.opencrow.app.OpenCrowApp
+import org.opencrow.app.ui.screens.chat.components.AttachmentPreviewRow
 import org.opencrow.app.ui.screens.chat.components.HistorySheet
 import org.opencrow.app.ui.screens.chat.components.MessageBubble
 import org.opencrow.app.ui.screens.chat.components.ThinkingBubble
@@ -36,7 +46,7 @@ fun ChatScreen(
     val context = LocalContext.current
     val app = context.applicationContext as OpenCrowApp
     val viewModel: ChatViewModel = viewModel(
-        factory = ChatViewModel.Factory(app.container.conversationRepository)
+        factory = ChatViewModel.Factory(app.container.conversationRepository, app)
     )
     val state by viewModel.uiState.collectAsState()
     val spacing = LocalSpacing.current
@@ -184,6 +194,7 @@ fun ChatScreen(
                             ) {
                                 items(state.messages, key = { it.id }) { msg ->
                                     val toolCalls = state.toolCallsByMessageId[msg.id]
+                                    val msgAttachments = state.attachmentsByMessageId[msg.id].orEmpty()
                                     Column(verticalArrangement = Arrangement.spacedBy(spacing.sm)) {
                                         // Show tool calls before the assistant response
                                         if (msg.role == "assistant" && !toolCalls.isNullOrEmpty()) {
@@ -191,7 +202,8 @@ fun ChatScreen(
                                         }
                                     MessageBubble(
                                         message = msg,
-                                        isTranscribed = msg.id in state.transcribedMessageIds
+                                        isTranscribed = msg.id in state.transcribedMessageIds,
+                                        attachments = msgAttachments
                                     )
                                 }
                             }
@@ -207,6 +219,23 @@ fun ChatScreen(
                 if (isTelegramChat) {
                     TelegramReadOnlyBar()
                 } else {
+                    // Attachment preview
+                    AnimatedVisibility(
+                        visible = state.attachments.isNotEmpty(),
+                        enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),
+                        exit = slideOutVertically(targetOffsetY = { it }) + fadeOut()
+                    ) {
+                        Surface(
+                            color = MaterialTheme.colorScheme.surfaceContainerLowest,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            AttachmentPreviewRow(
+                                attachments = state.attachments,
+                                onRemove = viewModel::removeAttachment
+                            )
+                        }
+                    }
+
                     ChatInputBar(
                         composing = state.composing,
                         onComposingChange = viewModel::updateComposing,
@@ -214,7 +243,9 @@ fun ChatScreen(
                         recording = state.recording,
                         transcribing = state.transcribing,
                         activeConversationId = state.activeConversationId,
+                        hasAttachments = state.attachments.isNotEmpty(),
                         onSend = { viewModel.sendMessage() },
+                        onAddAttachments = viewModel::addAttachments,
                         onStartRecording = {
                             if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO)
                                 == PackageManager.PERMISSION_GRANTED
@@ -280,99 +311,187 @@ private fun ChatInputBar(
     recording: Boolean,
     transcribing: Boolean,
     activeConversationId: String?,
+    hasAttachments: Boolean,
     onSend: () -> Unit,
+    onAddAttachments: (List<Attachment>) -> Unit,
     onStartRecording: () -> Unit,
     onStopRecording: () -> Unit
 ) {
     val spacing = LocalSpacing.current
+    val context = LocalContext.current
+    var showAttachPopup by remember { mutableStateOf(false) }
+
+    // File picker (any file type, multiple)
+    val filePicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenMultipleDocuments()
+    ) { uris ->
+        if (uris.isNotEmpty()) {
+            val attachments = uris.map { uri ->
+                val cursor = context.contentResolver.query(uri, null, null, null, null)
+                val name = cursor?.use {
+                    if (it.moveToFirst()) {
+                        val idx = it.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                        if (idx >= 0) it.getString(idx) else null
+                    } else null
+                } ?: uri.lastPathSegment ?: "file"
+                val mime = context.contentResolver.getType(uri)
+                Attachment(uri = uri, name = name, mimeType = mime)
+            }
+            onAddAttachments(attachments)
+        }
+    }
+
+    // Image picker (multiple)
+    val imagePicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenMultipleDocuments()
+    ) { uris ->
+        if (uris.isNotEmpty()) {
+            val attachments = uris.map { uri ->
+                val cursor = context.contentResolver.query(uri, null, null, null, null)
+                val name = cursor?.use {
+                    if (it.moveToFirst()) {
+                        val idx = it.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                        if (idx >= 0) it.getString(idx) else null
+                    } else null
+                } ?: uri.lastPathSegment ?: "image"
+                val mime = context.contentResolver.getType(uri)
+                Attachment(uri = uri, name = name, mimeType = mime)
+            }
+            onAddAttachments(attachments)
+        }
+    }
+
     Surface(
         color = MaterialTheme.colorScheme.surfaceContainerLowest,
         tonalElevation = 3.dp,
         modifier = Modifier.fillMaxWidth()
     ) {
-        Row(
-            modifier = Modifier
-                .padding(horizontal = spacing.sm, vertical = spacing.sm)
-                .navigationBarsPadding(),
-            verticalAlignment = Alignment.Bottom,
-            horizontalArrangement = Arrangement.spacedBy(spacing.xs)
-        ) {
-            IconButton(onClick = { /* placeholder */ }, modifier = Modifier.size(40.dp)) {
-                Icon(
-                    Icons.Outlined.AttachFile,
-                    contentDescription = "Attach",
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-
-            IconButton(
-                onClick = { /* placeholder for model selector */ },
-                enabled = false,
-                modifier = Modifier.size(40.dp)
+        Column {
+            Row(
+                modifier = Modifier
+                    .padding(horizontal = spacing.sm, vertical = spacing.sm)
+                    .navigationBarsPadding(),
+                verticalAlignment = Alignment.Bottom,
+                horizontalArrangement = Arrangement.spacedBy(spacing.xs)
             ) {
-                Icon(
-                    Icons.Outlined.SmartToy,
-                    contentDescription = "Model",
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
-                )
-            }
+                Box {
+                    IconButton(
+                        onClick = { showAttachPopup = !showAttachPopup },
+                        modifier = Modifier.size(40.dp)
+                    ) {
+                        Icon(
+                            Icons.Outlined.AttachFile,
+                            contentDescription = "Attach",
+                            tint = if (showAttachPopup) MaterialTheme.colorScheme.primary
+                            else MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
 
-            TextField(
-                value = composing,
-                onValueChange = onComposingChange,
-                modifier = Modifier.weight(1f),
-                placeholder = {
-                    Text(
-                        if (activeConversationId != null) "Message openCrow..." else "Start a new conversation...",
-                        style = MaterialTheme.typography.bodyMedium
-                    )
-                },
-                colors = TextFieldDefaults.colors(
-                    focusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-                    unfocusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-                    focusedIndicatorColor = MaterialTheme.colorScheme.primary,
-                    unfocusedIndicatorColor = Color.Transparent,
-                    cursorColor = MaterialTheme.colorScheme.primary
-                ),
-                textStyle = MaterialTheme.typography.bodyMedium,
-                maxLines = 4,
-                shape = MaterialTheme.shapes.small
-            )
+                    DropdownMenu(
+                        expanded = showAttachPopup,
+                        onDismissRequest = { showAttachPopup = false },
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text("Photos & Videos") },
+                            onClick = {
+                                showAttachPopup = false
+                                imagePicker.launch(arrayOf("image/*", "video/*"))
+                            },
+                            leadingIcon = {
+                                Icon(
+                                    Icons.Outlined.Image,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Files") },
+                            onClick = {
+                                showAttachPopup = false
+                                filePicker.launch(arrayOf("*/*"))
+                            },
+                            leadingIcon = {
+                                Icon(
+                                    Icons.Outlined.Description,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
+                            }
+                        )
+                    }
+                }
 
-            IconButton(
-                onClick = { if (recording) onStopRecording() else if (!transcribing) onStartRecording() },
-                enabled = !transcribing,
-                modifier = Modifier.size(40.dp)
-            ) {
-                if (transcribing) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(20.dp),
-                        strokeWidth = 2.dp,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                } else {
+                IconButton(
+                    onClick = { /* placeholder for model selector */ },
+                    enabled = false,
+                    modifier = Modifier.size(40.dp)
+                ) {
                     Icon(
-                        Icons.Filled.Mic,
-                        contentDescription = if (recording) "Stop recording" else "Record",
-                        tint = if (recording) MaterialTheme.colorScheme.error
-                        else MaterialTheme.colorScheme.onSurfaceVariant
+                        Icons.Outlined.SmartToy,
+                        contentDescription = "Model",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
                     )
                 }
-            }
 
-            FilledIconButton(
-                onClick = onSend,
-                enabled = composing.isNotBlank() && !sending,
-                modifier = Modifier.size(40.dp),
-                shape = MaterialTheme.shapes.small,
-                colors = IconButtonDefaults.filledIconButtonColors(
-                    containerColor = MaterialTheme.colorScheme.primary,
-                    contentColor = MaterialTheme.colorScheme.onPrimary,
-                    disabledContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-                    disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant
+                TextField(
+                    value = composing,
+                    onValueChange = onComposingChange,
+                    modifier = Modifier.weight(1f),
+                    placeholder = {
+                        Text(
+                            if (activeConversationId != null) "Message openCrow..." else "Start a new conversation...",
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                    },
+                    colors = TextFieldDefaults.colors(
+                        focusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                        unfocusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                        focusedIndicatorColor = MaterialTheme.colorScheme.primary,
+                        unfocusedIndicatorColor = Color.Transparent,
+                        cursorColor = MaterialTheme.colorScheme.primary
+                    ),
+                    textStyle = MaterialTheme.typography.bodyMedium,
+                    maxLines = 4,
+                    shape = MaterialTheme.shapes.small
                 )
-            ) {
-                Icon(Icons.Filled.Send, contentDescription = "Send", modifier = Modifier.size(18.dp))
+
+                IconButton(
+                    onClick = { if (recording) onStopRecording() else if (!transcribing) onStartRecording() },
+                    enabled = !transcribing,
+                    modifier = Modifier.size(40.dp)
+                ) {
+                    if (transcribing) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(20.dp),
+                            strokeWidth = 2.dp,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    } else {
+                        Icon(
+                            Icons.Filled.Mic,
+                            contentDescription = if (recording) "Stop recording" else "Record",
+                            tint = if (recording) MaterialTheme.colorScheme.error
+                            else MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+
+                FilledIconButton(
+                    onClick = onSend,
+                    enabled = (composing.isNotBlank() || hasAttachments) && !sending,
+                    modifier = Modifier.size(40.dp),
+                    shape = MaterialTheme.shapes.small,
+                    colors = IconButtonDefaults.filledIconButtonColors(
+                        containerColor = MaterialTheme.colorScheme.primary,
+                        contentColor = MaterialTheme.colorScheme.onPrimary,
+                        disabledContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                        disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                ) {
+                    Icon(Icons.Filled.Send, contentDescription = "Send", modifier = Modifier.size(18.dp))
+                }
             }
         }
     }
