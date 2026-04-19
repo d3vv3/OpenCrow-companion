@@ -31,6 +31,7 @@ data class ChatUiState(
     val composing: String = "",
     val sending: Boolean = false,
     val streaming: Boolean = false,
+    val refreshingMessages: Boolean = false,
     val loadingMessages: Boolean = false,
     val showHistory: Boolean = false,
     val showSystemChats: Boolean = false,
@@ -112,6 +113,19 @@ class ChatViewModel(
                 _uiState.update { it.copy(messages = fresh, loadingMessages = false) }
             } else {
                 _uiState.update { it.copy(loadingMessages = false) }
+            }
+        }
+    }
+
+    fun refreshMessages() {
+        val convId = _uiState.value.activeConversationId ?: return
+        _uiState.update { it.copy(refreshingMessages = true) }
+        viewModelScope.launch {
+            val (_, fresh) = repository.loadMessages(convId)
+            if (fresh != null) {
+                _uiState.update { it.copy(messages = fresh, refreshingMessages = false) }
+            } else {
+                _uiState.update { it.copy(refreshingMessages = false) }
             }
         }
     }

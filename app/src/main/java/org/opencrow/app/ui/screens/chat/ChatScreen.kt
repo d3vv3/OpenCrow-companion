@@ -10,6 +10,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -153,21 +154,26 @@ fun ChatScreen(
                             CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
                         }
                     } else {
-                        LazyColumn(
-                            state = listState,
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .padding(horizontal = spacing.md),
-                            contentPadding = PaddingValues(vertical = spacing.md),
-                            verticalArrangement = Arrangement.spacedBy(spacing.sm)
+                        PullToRefreshBox(
+                            isRefreshing = state.refreshingMessages,
+                            onRefresh = { viewModel.refreshMessages() },
+                            modifier = Modifier.fillMaxSize()
                         ) {
-                            items(state.messages, key = { it.id }) { msg ->
-                                val toolCalls = state.toolCallsByMessageId[msg.id]
-                                Column(verticalArrangement = Arrangement.spacedBy(spacing.sm)) {
-                                    // Show tool calls before the assistant response
-                                    if (msg.role == "assistant" && !toolCalls.isNullOrEmpty()) {
-                                        ToolCallBubble(toolCalls = toolCalls)
-                                    }
+                            LazyColumn(
+                                state = listState,
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .padding(horizontal = spacing.md),
+                                contentPadding = PaddingValues(vertical = spacing.md),
+                                verticalArrangement = Arrangement.spacedBy(spacing.sm)
+                            ) {
+                                items(state.messages, key = { it.id }) { msg ->
+                                    val toolCalls = state.toolCallsByMessageId[msg.id]
+                                    Column(verticalArrangement = Arrangement.spacedBy(spacing.sm)) {
+                                        // Show tool calls before the assistant response
+                                        if (msg.role == "assistant" && !toolCalls.isNullOrEmpty()) {
+                                            ToolCallBubble(toolCalls = toolCalls)
+                                        }
                                     MessageBubble(
                                         message = msg,
                                         isTranscribed = msg.id in state.transcribedMessageIds
@@ -177,6 +183,7 @@ fun ChatScreen(
                             if (state.sending) {
                                 item { ThinkingBubble() }
                             }
+                        }
                         }
                     }
                 }
