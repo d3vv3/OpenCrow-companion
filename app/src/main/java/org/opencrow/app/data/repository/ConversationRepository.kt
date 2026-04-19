@@ -9,6 +9,8 @@ import org.opencrow.app.data.local.MessageDao
 import org.opencrow.app.data.mapper.toCached
 import org.opencrow.app.data.mapper.toDto
 import org.opencrow.app.data.remote.ApiClient
+import org.opencrow.app.data.remote.StreamEvent
+import org.opencrow.app.data.remote.StreamingClient
 import org.opencrow.app.data.remote.dto.*
 
 class ConversationRepository(
@@ -19,6 +21,8 @@ class ConversationRepository(
     companion object {
         private const val TAG = "ConversationRepo"
     }
+
+    private val streamingClient = StreamingClient(apiClient)
 
     private val _refreshSignal = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
     val refreshSignal: SharedFlow<Unit> = _refreshSignal.asSharedFlow()
@@ -87,6 +91,10 @@ class ConversationRepository(
             Log.e(TAG, "Send failed", e)
             null
         }
+    }
+
+    fun streamMessage(conversationId: String, text: String): kotlinx.coroutines.flow.Flow<StreamEvent> {
+        return streamingClient.stream(CompleteRequest(conversationId, text))
     }
 
     suspend fun cacheMessage(message: MessageDto) {

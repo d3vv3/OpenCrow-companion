@@ -41,8 +41,8 @@ fun ChatScreen(
     val spacing = LocalSpacing.current
     val listState = rememberLazyListState()
 
-    // Auto-scroll on new messages
-    LaunchedEffect(state.messages.size, state.sending) {
+    // Auto-scroll on new messages or streaming updates
+    LaunchedEffect(state.messages.size, state.sending, state.messages.lastOrNull()?.content?.length) {
         if (state.messages.isNotEmpty()) {
             listState.animateScrollToItem(state.messages.size - 1)
         }
@@ -188,7 +188,7 @@ fun ChatScreen(
                     ChatInputBar(
                         composing = state.composing,
                         onComposingChange = viewModel::updateComposing,
-                        sending = state.sending,
+                        sending = state.sending || state.streaming,
                         recording = state.recording,
                         transcribing = state.transcribing,
                         activeConversationId = state.activeConversationId,

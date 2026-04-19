@@ -115,11 +115,16 @@ fun ToolCallBubble(toolCalls: List<ToolCallDto>) {
 @Composable
 private fun ToolCallItem(call: ToolCallDto) {
     val isSuccess = call.status == "success" || call.status == "ok"
-    val statusIcon = if (isSuccess) Icons.Filled.CheckCircle else Icons.Filled.Error
-    val statusColor = if (isSuccess) {
-        MaterialTheme.colorScheme.tertiary
-    } else {
-        MaterialTheme.colorScheme.error
+    val isRunning = call.status == "running"
+    val statusIcon = when {
+        isRunning -> Icons.Filled.Build
+        isSuccess -> Icons.Filled.CheckCircle
+        else -> Icons.Filled.Error
+    }
+    val statusColor = when {
+        isRunning -> MaterialTheme.colorScheme.onSurfaceVariant
+        isSuccess -> MaterialTheme.colorScheme.tertiary
+        else -> MaterialTheme.colorScheme.error
     }
 
     Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {

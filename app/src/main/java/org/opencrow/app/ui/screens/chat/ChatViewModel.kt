@@ -15,6 +15,7 @@ import kotlinx.coroutines.launch
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.MultipartBody
 import okhttp3.RequestBody.Companion.asRequestBody
+import org.opencrow.app.data.remote.StreamEvent
 import org.opencrow.app.data.remote.dto.ConversationDto
 import org.opencrow.app.data.remote.dto.MessageDto
 import org.opencrow.app.data.remote.dto.ToolCallDto
@@ -29,6 +30,7 @@ data class ChatUiState(
     val messages: List<MessageDto> = emptyList(),
     val composing: String = "",
     val sending: Boolean = false,
+    val streaming: Boolean = false,
     val loadingMessages: Boolean = false,
     val showHistory: Boolean = false,
     val showSystemChats: Boolean = false,
@@ -163,51 +165,136 @@ class ChatViewModel(
                     content = trimmed,
                     createdAt = now
                 )
-                _uiState.update { it.copy(messages = it.messages + tempMsg) }
-
-                // Call orchestrator
-                val response = repository.sendMessage(convId, trimmed)
-                if (response != null) {
-                    val assistantMsg = MessageDto(
-                        id = "asst-${System.currentTimeMillis()}",
-                        conversationId = convId,
-                        role = "assistant",
-                        content = response.output,
-                        createdAt = now
-                    )
-
-                    val toolCalls = response.trace?.toolCalls.orEmpty()
-
-                    _uiState.update { state ->
-                        val newTranscribed = if (isTranscribed) {
-                            state.transcribedMessageIds + tempMsg.id
-                        } else state.transcribedMessageIds
-
-                        val newToolCalls = if (toolCalls.isNotEmpty()) {
-                            state.toolCallsByMessageId + (assistantMsg.id to toolCalls)
-                        } else state.toolCallsByMessageId
-
-                        state.copy(
-                            messages = state.messages + assistantMsg,
-                            transcribedMessageIds = newTranscribed,
-                            toolCallsByMessageId = newToolCalls,
-                            conversations = state.conversations.map { conv ->
-                                if (conv.id == convId) conv.copy(updatedAt = now) else conv
-                            }.sortedByDescending { it.updatedAt }
+                if (isTranscribed) {
+                    _uiState.update {
+                        it.copy(
+                            messages = it.messages + tempMsg,
+                            transcribedMessageIds = it.transcribedMessageIds + tempMsg.id
                         )
                     }
+                } else {
+                    _uiState.update { it.copy(messages = it.messages + tempMsg) }
+                }
 
-                    // Cache
-                    repository.cacheMessage(tempMsg)
-                    repository.cacheMessage(assistantMsg)
-                    _uiState.value.conversations.find { it.id == convId }?.let {
-                        repository.updateCachedConversation(it)
+                // Streaming assistant message placeholder
+                val assistantId = "asst-${System.currentTimeMillis()}"
+                val assistantMsg = MessageDto(
+                    id = assistantId,
+                    conversationId = convId,
+                    role = "assistant",
+                    content = "",
+                    createdAt = now
+                )
+                _uiState.update {
+                    it.copy(
+                        messages = it.messages + assistantMsg,
+                        sending = false,
+                        streaming = true
+                    )
+                }
+
+                // Collect tool calls during streaming
+                val streamToolCalls = mutableListOf<ToolCallDto>()
+                var pendingToolCall: String? = null
+
+                repository.streamMessage(convId, trimmed).collect { event ->
+                    when (event) {
+                        is StreamEvent.Delta -> {
+                            _uiState.update { state ->
+                                state.copy(
+                                    messages = state.messages.map { msg ->
+                                        if (msg.id == assistantId) msg.copy(content = msg.content + event.token)
+                                        else msg
+                                    }
+                                )
+                            }
+                        }
+                        is StreamEvent.ToolCall -> {
+                            pendingToolCall = event.name
+                            val dto = ToolCallDto(
+                                name = event.name,
+                                arguments = parseToolArguments(event.arguments),
+                                status = "running",
+                                output = null
+                            )
+                            streamToolCalls.add(dto)
+                            _uiState.update { state ->
+                                state.copy(
+                                    toolCallsByMessageId = state.toolCallsByMessageId +
+                                        (assistantId to streamToolCalls.toList())
+                                )
+                            }
+                        }
+                        is StreamEvent.ToolResult -> {
+                            val idx = streamToolCalls.indexOfLast { it.name == event.name }
+                            if (idx >= 0) {
+                                streamToolCalls[idx] = streamToolCalls[idx].copy(
+                                    status = "success",
+                                    output = event.result
+                                )
+                                _uiState.update { state ->
+                                    state.copy(
+                                        toolCallsByMessageId = state.toolCallsByMessageId +
+                                            (assistantId to streamToolCalls.toList())
+                                    )
+                                }
+                            }
+                            pendingToolCall = null
+                        }
+                        is StreamEvent.Done -> {
+                            // Replace content with final output
+                            _uiState.update { state ->
+                                state.copy(
+                                    streaming = false,
+                                    messages = state.messages.map { msg ->
+                                        if (msg.id == assistantId) msg.copy(content = event.output)
+                                        else msg
+                                    },
+                                    conversations = state.conversations.map { conv ->
+                                        if (conv.id == convId) conv.copy(updatedAt = now) else conv
+                                    }.sortedByDescending { it.updatedAt }
+                                )
+                            }
+                        }
+                        is StreamEvent.Error -> {
+                            Log.e(TAG, "Stream error: ${event.error}")
+                            _uiState.update { state ->
+                                state.copy(
+                                    streaming = false,
+                                    messages = state.messages.map { msg ->
+                                        if (msg.id == assistantId && msg.content.isBlank()) {
+                                            msg.copy(content = "⚠ ${event.error}")
+                                        } else msg
+                                    }
+                                )
+                            }
+                        }
                     }
+                }
+
+                // Cache final messages
+                repository.cacheMessage(tempMsg)
+                _uiState.value.messages.find { it.id == assistantId }?.let {
+                    repository.cacheMessage(it)
+                }
+                _uiState.value.conversations.find { it.id == convId }?.let {
+                    repository.updateCachedConversation(it)
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Send failed", e)
+                _uiState.update { it.copy(streaming = false) }
             }
-            _uiState.update { it.copy(sending = false) }
+            _uiState.update { it.copy(sending = false, streaming = false) }
+        }
+    }
+
+    @Suppress("UNCHECKED_CAST")
+    private fun parseToolArguments(json: String): Map<String, Any>? {
+        return try {
+            val type = object : com.google.gson.reflect.TypeToken<Map<String, Any>>() {}.type
+            com.google.gson.Gson().fromJson<Map<String, Any>>(json, type)
+        } catch (_: Exception) {
+            null
         }
     }
 
