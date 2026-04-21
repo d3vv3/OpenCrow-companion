@@ -349,6 +349,7 @@ fun ChatScreen(
             onToggleSystemChats = viewModel::toggleSystemChats,
             onSelectConversation = viewModel::selectConversation,
             onDeleteConversation = viewModel::deleteConversation,
+            onNavigateToSettings = onNavigateToSettings,
             onDismiss = { viewModel.toggleHistory(false) }
         )
     }

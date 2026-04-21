@@ -28,6 +28,7 @@ import org.opencrow.app.data.repository.ConversationRepository
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.*
+import org.json.JSONObject
 
 data class Attachment(
     val id: String = UUID.randomUUID().toString(),
@@ -333,11 +334,14 @@ class ChatViewModel(
         val timestamps = sortedAssistants.map { it.createdAt }
 
         for (tc in toolCalls) {
-            // Binary search for the first assistant message with createdAt >= tc.createdAt
+            // Binary search for insertion point of tc.createdAt in sorted assistant timestamps.
+            // Tool calls happen mid-stream, so their createdAt is AFTER the owning assistant's
+            // createdAt (which is set at stream start). We want the LAST assistant before the
+            // tool call, i.e. sortedAssistants[idx - 1].
             var idx = timestamps.binarySearch(tc.createdAt)
-            if (idx < 0) idx = -(idx + 1) // insertion point
-            val owner = if (idx < sortedAssistants.size) sortedAssistants[idx]
-                        else sortedAssistants.last()
+            if (idx < 0) idx = -(idx + 1) // convert to insertion point
+            val ownerIdx = (idx - 1).coerceAtLeast(0)
+            val owner = sortedAssistants[ownerIdx]
 
             result.getOrPut(owner.id) { mutableListOf() }.add(
                 ToolCallDto(
@@ -467,7 +471,11 @@ class ChatViewModel(
                         is StreamEvent.ToolResult -> {
                             val idx = streamToolCalls.indexOfLast { it.name == event.name }
                             if (idx >= 0) {
-                                streamToolCalls[idx] = streamToolCalls[idx].copy(status = "success", output = event.result)
+                                val errored = isToolResultError(event.result)
+                                streamToolCalls[idx] = streamToolCalls[idx].copy(
+                                    status = if (errored) "error" else "success",
+                                    output = event.result
+                                )
                                 _uiState.update { state ->
                                     state.copy(toolCallsByMessageId = state.toolCallsByMessageId + (messageId to streamToolCalls.toList()))
                                 }
@@ -668,8 +676,9 @@ class ChatViewModel(
                         is StreamEvent.ToolResult -> {
                             val idx = streamToolCalls.indexOfLast { it.name == event.name }
                             if (idx >= 0) {
+                                val errored = isToolResultError(event.result)
                                 streamToolCalls[idx] = streamToolCalls[idx].copy(
-                                    status = "success",
+                                    status = if (errored) "error" else "success",
                                     output = event.result
                                 )
                                 _uiState.update { state ->
@@ -860,4 +869,34 @@ class ChatViewModel(
             return ChatViewModel(repository, appContext) as T
         }
     }
+}
+
+/**
+ * Heuristically determines if a tool result string represents an error.
+ *
+ * The server can return errors in two forms:
+ * 1. MCP / built-in tools that return structured JSON: {"success": false, "error": "..."}
+ * 2. Go execution errors surfaced as plain strings (e.g. "connection refused")
+ *
+ * For (1) we parse JSON and check for success:false or a top-level "error" key.
+ * For (2) we rely on the persisted ToolCallRecordDto.error field (set by the server
+ * after the stream completes) which is correctly mapped in associateToolCalls().
+ */
+internal fun isToolResultError(result: String): Boolean {
+    val trimmed = result.trim()
+    // Plain-string error patterns (non-JSON responses)
+    if (trimmed.startsWith("MCP error", ignoreCase = true)) return true
+    if (trimmed.startsWith("Error:", ignoreCase = true)) return true
+    if (trimmed.startsWith("{")) {
+        return try {
+            val obj = JSONObject(trimmed)
+            val successVal = if (obj.has("success")) obj.get("success") else null
+            when {
+                successVal == false || successVal == "false" -> true
+                obj.has("error") && successVal != true && successVal != "true" -> true
+                else -> false
+            }
+        } catch (_: Exception) { false }
+    }
+    return false
 }

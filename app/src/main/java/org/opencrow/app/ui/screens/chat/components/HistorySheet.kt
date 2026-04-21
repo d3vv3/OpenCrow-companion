@@ -17,6 +17,7 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -49,6 +50,7 @@ fun HistorySheet(
     onToggleSystemChats: (Boolean) -> Unit,
     onSelectConversation: (String) -> Unit,
     onDeleteConversation: (String) -> Unit,
+    onNavigateToSettings: () -> Unit,
     onDismiss: () -> Unit
 ) {
     val spacing = LocalSpacing.current
@@ -151,14 +153,13 @@ fun HistorySheet(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .navigationBarsPadding()
-                        .padding(horizontal = spacing.md, vertical = spacing.sm),
+                        .padding(horizontal = spacing.md, vertical = 10.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        "System chats",
-                        style = MaterialTheme.typography.bodyMedium,
+                        "Show system chats",
+                        style = MaterialTheme.typography.bodyLarge,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     Switch(
@@ -170,12 +171,42 @@ fun HistorySheet(
                         )
                     )
                 }
+                HorizontalDivider(
+                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.2f)
+                )
+                Spacer(Modifier.height(4.dp))
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .navigationBarsPadding()
+                        .clickable {
+                            onDismiss()
+                            onNavigateToSettings()
+                        }
+                        .padding(horizontal = spacing.md, vertical = 10.dp),
+                    horizontalArrangement = Arrangement.spacedBy(spacing.sm),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        Icons.Outlined.Settings,
+                        contentDescription = "Configuration",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(26.dp)
+                    )
+                    Text(
+                        "Configuration",
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                // Extra safe space below the last row so thumb doesn't reach the edge
+                Spacer(Modifier.height(spacing.md))
             }
         }
     }
 }
 
-/** Custom swipe-to-delete with haptic, resistance and spring snap-back. */
+/** Custom swipe-to-delete with haptic, resistance, spring snap-back and animated collapse. */
 @Composable
 private fun SwipeToDeleteRow(
     onDelete: () -> Unit,
@@ -184,7 +215,9 @@ private fun SwipeToDeleteRow(
     val haptic = LocalHapticFeedback.current
     val scope = rememberCoroutineScope()
     val offsetX = remember { Animatable(0f) }
+    val heightDp = remember { Animatable(62f) }
     var thresholdPx by remember { mutableFloatStateOf(80f) }
+    var rowWidthPx by remember { mutableFloatStateOf(0f) }
     var crossedThreshold by remember { mutableStateOf(false) }
 
     val errorContainerColor = MaterialTheme.colorScheme.errorContainer
@@ -195,13 +228,14 @@ private fun SwipeToDeleteRow(
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .height(62.dp)
+            .height(heightDp.value.dp)
             .pointerInput(Unit) {
-                // threshold = 20% of card width
+                rowWidthPx = size.width.toFloat()
                 thresholdPx = size.width * 0.20f
                 detectHorizontalDragGestures(
                     onDragStart = { crossedThreshold = false },
                     onHorizontalDrag = { _, dx ->
+                        if (heightDp.value < 62f) return@detectHorizontalDragGestures
                         val current = offsetX.value
                         val absVal = current.absoluteValue
                         val next: Float = if (absVal < thresholdPx) {
@@ -224,19 +258,25 @@ private fun SwipeToDeleteRow(
                     },
                     onDragEnd = {
                         if (offsetX.value.absoluteValue >= thresholdPx) {
-                            onDelete()
-                            scope.launch { offsetX.snapTo(0f) }
+                            // Fly the card off-screen, then collapse the row height, then delete
+                            scope.launch {
+                                val flyDir = if (offsetX.value < 0) -rowWidthPx else rowWidthPx
+                                launch { offsetX.animateTo(flyDir, tween(160)) }
+                                kotlinx.coroutines.delay(80)
+                                heightDp.animateTo(0f, tween(180, easing = FastOutSlowInEasing))
+                                onDelete()
+                            }
                         } else {
                             scope.launch {
-                                offsetX.animateTo(0f, spring(dampingRatio = 0.55f, stiffness = 450f))
                                 haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                offsetX.animateTo(0f, spring(dampingRatio = 0.85f, stiffness = 1400f))
                             }
                         }
                         crossedThreshold = false
                     },
                     onDragCancel = {
                         scope.launch {
-                            offsetX.animateTo(0f, spring(dampingRatio = 0.55f, stiffness = 450f))
+                            offsetX.animateTo(0f, spring(dampingRatio = 0.85f, stiffness = 1400f))
                         }
                         crossedThreshold = false
                     }

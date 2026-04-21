@@ -61,7 +61,9 @@ class StreamingClient(private val apiClient: ApiClient) {
             }
 
             override fun onFailure(eventSource: EventSource, t: Throwable?, response: Response?) {
-                val msg = t?.message ?: response?.message ?: "Stream failed"
+                val bodyText = try { response?.peekBody(4096)?.string() } catch (_: Exception) { null }
+                val msg = bodyText?.takeIf { it.isNotBlank() } ?: t?.message ?: response?.message ?: "Stream failed"
+                android.util.Log.e("StreamingClient", "stream failure ${response?.code}: $bodyText")
                 trySend(StreamEvent.Error(msg))
                 close()
             }
@@ -101,7 +103,9 @@ class StreamingClient(private val apiClient: ApiClient) {
             }
 
             override fun onFailure(eventSource: EventSource, t: Throwable?, response: Response?) {
-                val msg = t?.message ?: response?.message ?: "Stream failed"
+                val bodyText = try { response?.peekBody(4096)?.string() } catch (_: Exception) { null }
+                val msg = bodyText?.takeIf { it.isNotBlank() } ?: t?.message ?: response?.message ?: "Stream failed"
+                android.util.Log.e("StreamingClient", "regenerate failure ${response?.code}: $bodyText")
                 trySend(StreamEvent.Error(msg))
                 close()
             }
