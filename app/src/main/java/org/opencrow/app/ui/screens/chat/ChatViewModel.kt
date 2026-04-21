@@ -185,23 +185,46 @@ class ChatViewModel(
     }
 
     private fun loadMessages(conversationId: String) {
+        // Snapshot the active stream messageId at load time so we know what to preserve
+        val app = appContext as? org.opencrow.app.OpenCrowApp
+        val activeStreamAtLoad = app?.container?.activeStream?.value
+            ?.takeIf { it.conversationId == conversationId }
+
         viewModelScope.launch {
             val (cached, fresh) = repository.loadMessages(conversationId)
             if (cached.isNotEmpty()) {
                 val processedCached = processMessages(cached)
-                _uiState.update { it.copy(messages = processedCached, loadingMessages = false) }
+                _uiState.update { state ->
+                    val freshIds = processedCached.map { it.id }.toSet()
+                    // Only preserve the active streaming placeholder, nothing else
+                    val streamingPlaceholder = activeStreamAtLoad?.messageId?.let { id ->
+                        state.messages.find { it.id == id && it.id !in freshIds }
+                    }
+                    state.copy(
+                        messages = processedCached + listOfNotNull(streamingPlaceholder),
+                        loadingMessages = false
+                    )
+                }
             } else {
                 _uiState.update { it.copy(loadingMessages = true) }
             }
             if (fresh != null) {
                 val processedFresh = processMessages(fresh)
-                _uiState.update { it.copy(messages = processedFresh, loadingMessages = false) }
+                _uiState.update { state ->
+                    val freshIds = processedFresh.map { it.id }.toSet()
+                    val streamingPlaceholder = activeStreamAtLoad?.messageId?.let { id ->
+                        state.messages.find { it.id == id && it.id !in freshIds }
+                    }
+                    state.copy(
+                        messages = processedFresh + listOfNotNull(streamingPlaceholder),
+                        loadingMessages = false
+                    )
+                }
             } else {
                 _uiState.update { it.copy(loadingMessages = false) }
             }
 
-            // Re-inject active stream placeholder if AssistViewModel is mid-stream for this conversation
-            val app = appContext as? org.opencrow.app.OpenCrowApp
+            // If no streaming placeholder is present yet, inject one now
             val streamState = app?.container?.activeStream?.value
             if (streamState != null && streamState.conversationId == conversationId) {
                 val msgId = streamState.messageId
@@ -216,10 +239,7 @@ class ChatViewModel(
                         createdAt = now
                     )
                     _uiState.update { state ->
-                        state.copy(
-                            streaming = streamState.isStreaming,
-                            messages = state.messages + placeholder
-                        )
+                        state.copy(streaming = streamState.isStreaming, messages = state.messages + placeholder)
                     }
                 }
             }

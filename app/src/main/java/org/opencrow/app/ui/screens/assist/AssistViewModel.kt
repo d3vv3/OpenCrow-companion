@@ -264,15 +264,25 @@ class AssistViewModel(
                         }
                         is StreamEvent.Done -> {
                             streamingBuffer.clear()
+                            val finalMsg = MessageDto(
+                                id = assistantId,
+                                conversationId = convId,
+                                role = "assistant",
+                                content = event.output,
+                                createdAt = now
+                            )
                             _uiState.update { state ->
                                 state.copy(
                                     streaming = false,
                                     messages = state.messages.map { msg ->
-                                        if (msg.id == assistantId) msg.copy(content = event.output) else msg
+                                        if (msg.id == assistantId) finalMsg else msg
                                     }
                                 )
                             }
-                            // Final update then clear
+                            // Cache eagerly here -- before clearing activeStream, which triggers
+                            // AssistActivity.finish() and could cancel the ViewModel coroutine.
+                            repository.cacheMessage(finalMsg)
+                            // Final bridge update then clear
                             app.container.activeStream.value = ActiveStreamState(
                                 conversationId = convId,
                                 messageId = assistantId,
