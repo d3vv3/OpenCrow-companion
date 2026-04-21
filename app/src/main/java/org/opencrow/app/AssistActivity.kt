@@ -1,5 +1,6 @@
 package org.opencrow.app
 
+import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -18,7 +19,18 @@ class AssistActivity : ComponentActivity() {
             OpenCrowTheme {
                 AssistScreen(
                     screenshotPath = screenshotPath,
-                    onDismiss = { finish() }
+                    onDismiss = { finish() },
+                    onOpenFullScreen = { conversationId ->
+                        startActivity(
+                            Intent(this, MainActivity::class.java).apply {
+                                flags = Intent.FLAG_ACTIVITY_NEW_TASK or
+                                        Intent.FLAG_ACTIVITY_CLEAR_TOP or
+                                        Intent.FLAG_ACTIVITY_SINGLE_TOP
+                                conversationId?.let { putExtra("conversation_id", it) }
+                            }
+                        )
+                        finish()
+                    }
                 )
             }
         }

@@ -2,6 +2,8 @@ package org.opencrow.app.ui.screens.assist
 
 import android.content.Context
 import android.graphics.BitmapFactory
+import android.media.MediaRecorder
+import android.os.Build
 import android.util.Base64
 import android.util.Log
 import androidx.lifecycle.ViewModel
@@ -14,6 +16,9 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.MultipartBody
+import okhttp3.RequestBody.Companion.asRequestBody
 import org.opencrow.app.data.remote.StreamEvent
 import org.opencrow.app.data.remote.dto.MessageDto
 import org.opencrow.app.data.repository.ConfigRepository
@@ -33,7 +38,9 @@ data class AssistUiState(
     val apiReady: Boolean = false,
     val screenshotPath: String? = null,
     val screenshotAvailable: Boolean = false,
-    val attachScreenshot: Boolean = false
+    val attachScreenshot: Boolean = false,
+    val recording: Boolean = false,
+    val transcribing: Boolean = false
 )
 
 class AssistViewModel(
@@ -52,6 +59,9 @@ class AssistViewModel(
 
     private val streamingBuffer = StringBuilder()
 
+    private var mediaRecorder: MediaRecorder? = null
+    private var audioFile: File? = null
+
     /** Cached user preference — null until loaded from DB */
     private var savedScreenshotPref: Boolean? = null
 
@@ -63,7 +73,7 @@ class AssistViewModel(
     private fun loadScreenshotPreference() {
         viewModelScope.launch {
             val saved = configRepository.getLocalSetting(PREF_ATTACH_SCREENSHOT)
-            savedScreenshotPref = saved?.toBooleanStrictOrNull() ?: true
+            savedScreenshotPref = saved?.toBooleanStrictOrNull() ?: false
             // Apply to current state if a screenshot path is already set
             if (_uiState.value.screenshotPath != null) {
                 _uiState.update { it.copy(attachScreenshot = savedScreenshotPref!!) }
@@ -85,7 +95,7 @@ class AssistViewModel(
     }
 
     fun setScreenshotPath(path: String?) {
-        val pref = savedScreenshotPref ?: true
+        val pref = savedScreenshotPref ?: false
         _uiState.update {
             it.copy(
                 screenshotPath = path,
@@ -275,6 +285,57 @@ class AssistViewModel(
         } else {
             text
         }
+    }
+
+    fun startRecording(context: Context) {
+        val file = File(context.cacheDir, "assist_voice_${System.currentTimeMillis()}.m4a")
+        audioFile = file
+        val recorder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            MediaRecorder(context)
+        } else {
+            @Suppress("DEPRECATION")
+            MediaRecorder()
+        }
+        recorder.apply {
+            setAudioSource(MediaRecorder.AudioSource.MIC)
+            setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
+            setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
+            setOutputFile(file.absolutePath)
+            prepare()
+            start()
+        }
+        mediaRecorder = recorder
+        _uiState.update { it.copy(recording = true) }
+    }
+
+    fun stopRecordingAndTranscribe() {
+        _uiState.update { it.copy(recording = false) }
+        try {
+            mediaRecorder?.stop()
+            mediaRecorder?.release()
+        } catch (_: Exception) {}
+        mediaRecorder = null
+        val file = audioFile ?: return
+        _uiState.update { it.copy(transcribing = true) }
+        viewModelScope.launch {
+            try {
+                val requestBody = file.asRequestBody("audio/mp4".toMediaType())
+                val part = MultipartBody.Part.createFormData("audio", file.name, requestBody)
+                val transcript = repository.transcribeAudio(part)
+                if (!transcript.isNullOrBlank()) {
+                    _uiState.update { it.copy(composing = transcript.trim()) }
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Transcription failed", e)
+            }
+            _uiState.update { it.copy(transcribing = false) }
+            file.delete()
+        }
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        try { mediaRecorder?.release() } catch (_: Exception) {}
     }
 
     class Factory(

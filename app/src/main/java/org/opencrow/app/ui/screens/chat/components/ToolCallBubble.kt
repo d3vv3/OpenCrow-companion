@@ -5,8 +5,12 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.widget.Toast
 import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -20,7 +24,6 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -28,6 +31,8 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import org.json.JSONArray
+import org.json.JSONObject
 import org.opencrow.app.data.remote.dto.ToolCallDto
 import org.opencrow.app.ui.theme.LocalSpacing
 
@@ -39,101 +44,85 @@ fun ToolCallBubble(toolCalls: List<ToolCallDto>) {
     val context = LocalContext.current
     val haptic = LocalHapticFeedback.current
 
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.Start
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .animateContentSize(animationSpec = tween(180, easing = FastOutSlowInEasing))
     ) {
-        // Dot indicator aligned with assistant messages
-        Box(
-            modifier = Modifier
-                .padding(top = 10.dp, end = spacing.sm)
-                .size(8.dp)
-                .clip(RoundedCornerShape(4.dp))
-                .background(MaterialTheme.colorScheme.tertiary.copy(alpha = 0.6f))
-        )
-
+        // Collapsed header — always visible, shows tool name + main arg
         Surface(
+            onClick = { expanded = !expanded },
             color = MaterialTheme.colorScheme.surfaceContainerLow,
-            shape = MaterialTheme.shapes.medium,
+            shape = RoundedCornerShape(8.dp),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f)),
             modifier = Modifier
-                .widthIn(max = 300.dp)
+                .fillMaxWidth()
                 .combinedClickable(
                     onClick = { expanded = !expanded },
                     onLongClick = {
                         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                        val text = toolCalls.joinToString("\n\n") { call ->
-                            buildString {
-                                append("[${call.status}] ${call.name}")
-                                call.arguments?.let { args ->
-                                    append("\n  args: ${args.entries.joinToString(", ") { (k, v) -> "$k: $v" }}")
-                                }
-                                call.output?.let { append("\n  output: $it") }
-                            }
-                        }
-                        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                        clipboard.setPrimaryClip(ClipData.newPlainText("tool_calls", text))
-                        Toast.makeText(context, "Copied to clipboard", Toast.LENGTH_SHORT).show()
+                        val text = toolCalls.joinToString("\n") { "[${it.status}] ${it.name}" }
+                        val cb = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                        cb.setPrimaryClip(ClipData.newPlainText("tool_calls", text))
+                        Toast.makeText(context, "Copied", Toast.LENGTH_SHORT).show()
                     }
                 )
         ) {
-            Column(
-                modifier = Modifier
-                    .animateContentSize()
-                    .padding(10.dp)
+            Row(
+                modifier = Modifier.padding(horizontal = spacing.sm, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                // Header row
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    Icon(
-                        Icons.Filled.Build,
-                        contentDescription = null,
-                        modifier = Modifier.size(14.dp),
-                        tint = MaterialTheme.colorScheme.tertiary
-                    )
-                    Text(
-                        "${toolCalls.size} tool call${if (toolCalls.size != 1) "s" else ""}",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Spacer(Modifier.weight(1f))
-                    Icon(
-                        if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
-                        contentDescription = if (expanded) "Collapse" else "Expand",
-                        modifier = Modifier.size(16.dp),
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-
-                // Collapsed: show tool names inline
-                if (!expanded) {
-                    Spacer(Modifier.height(4.dp))
-                    Text(
-                        toolCalls.joinToString(", ") { it.name },
-                        style = MaterialTheme.typography.bodySmall.copy(
-                            fontFamily = FontFamily.Monospace,
-                            fontSize = 11.sp
-                        ),
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
-
-                // Expanded: show each tool call with details
-                if (expanded) {
-                    Spacer(Modifier.height(6.dp))
-                    toolCalls.forEachIndexed { index, call ->
-                        if (index > 0) {
-                            HorizontalDivider(
-                                modifier = Modifier.padding(vertical = 6.dp),
-                                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)
-                            )
-                        }
-                        ToolCallItem(call)
+                Icon(
+                    Icons.Filled.Build,
+                    contentDescription = null,
+                    modifier = Modifier.size(13.dp),
+                    tint = MaterialTheme.colorScheme.tertiary
+                )
+                Text(
+                    toolCalls.joinToString(" · ") { toolCallSummary(it) },
+                    style = MaterialTheme.typography.labelSmall.copy(
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 11.sp
+                    ),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f)
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(3.dp)) {
+                    toolCalls.forEach { call ->
+                        val ok = call.status == "success" || call.status == "ok"
+                        val err = call.status == "error" || call.status == "failed"
+                        Icon(
+                            if (ok) Icons.Filled.CheckCircle
+                            else if (err) Icons.Filled.Error
+                            else Icons.Filled.Build,
+                            contentDescription = null,
+                            modifier = Modifier.size(10.dp),
+                            tint = when {
+                                ok -> MaterialTheme.colorScheme.tertiary
+                                err -> MaterialTheme.colorScheme.error
+                                else -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                            }
+                        )
                     }
+                }
+                Icon(
+                    if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+                    contentDescription = null,
+                    modifier = Modifier.size(14.dp),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+
+        // Expanded: output only (args shown in collapsed row)
+        if (expanded) {
+            Spacer(Modifier.height(3.dp))
+            Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                toolCalls.forEach { call ->
+                    ToolCallOutput(call)
                 }
             }
         }
@@ -141,87 +130,81 @@ fun ToolCallBubble(toolCalls: List<ToolCallDto>) {
 }
 
 @Composable
-private fun ToolCallItem(call: ToolCallDto) {
-    val isSuccess = call.status == "success" || call.status == "ok"
-    val isRunning = call.status == "running"
-    val statusIcon = when {
-        isRunning -> Icons.Filled.Build
-        isSuccess -> Icons.Filled.CheckCircle
-        else -> Icons.Filled.Error
-    }
+private fun ToolCallOutput(call: ToolCallDto) {
+    val spacing = LocalSpacing.current
+    val ok = call.status == "success" || call.status == "ok"
+    val err = call.status == "error" || call.status == "failed"
     val statusColor = when {
-        isRunning -> MaterialTheme.colorScheme.onSurfaceVariant
-        isSuccess -> MaterialTheme.colorScheme.tertiary
-        else -> MaterialTheme.colorScheme.error
+        ok -> MaterialTheme.colorScheme.tertiary
+        err -> MaterialTheme.colorScheme.error
+        else -> MaterialTheme.colorScheme.onSurfaceVariant
+    }
+    val outputJson = remember(call.output) {
+        if (call.output.isNullOrBlank()) null else prettyJsonOrRaw(call.output)
     }
 
-    Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
-        // Tool name + status
+    if (outputJson == null) return
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(MaterialTheme.colorScheme.surfaceContainerLowest, RoundedCornerShape(8.dp))
+            .border(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f), RoundedCornerShape(8.dp))
+            .padding(spacing.sm),
+        verticalArrangement = Arrangement.spacedBy(spacing.xs)
+    ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(4.dp)
+            horizontalArrangement = Arrangement.spacedBy(spacing.xs)
         ) {
             Icon(
-                statusIcon,
-                contentDescription = call.status,
-                modifier = Modifier.size(12.dp),
+                if (ok) Icons.Filled.CheckCircle else if (err) Icons.Filled.Error else Icons.Filled.Build,
+                contentDescription = null,
+                modifier = Modifier.size(11.dp),
                 tint = statusColor
             )
             Text(
                 call.name,
-                style = MaterialTheme.typography.labelMedium.copy(
-                    fontFamily = FontFamily.Monospace
-                ),
-                color = MaterialTheme.colorScheme.onSurface
+                style = MaterialTheme.typography.labelSmall.copy(fontFamily = FontFamily.Monospace),
+                color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
-
-        // Arguments (compact)
-        if (!call.arguments.isNullOrEmpty()) {
-            val argsText = call.arguments.entries.joinToString(", ") { (k, v) ->
-                "$k: ${formatArgValue(v)}"
-            }
+        Surface(
+            color = MaterialTheme.colorScheme.surfaceContainerHighest,
+            shape = RoundedCornerShape(6.dp)
+        ) {
             Text(
-                argsText,
+                outputJson,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 8.dp, vertical = 6.dp),
                 style = MaterialTheme.typography.bodySmall.copy(
                     fontFamily = FontFamily.Monospace,
-                    fontSize = 10.sp
+                    fontSize = 10.sp,
+                    lineHeight = 14.sp
                 ),
-                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
-                maxLines = 3,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 40,
                 overflow = TextOverflow.Ellipsis
             )
-        }
-
-        // Output (truncated)
-        if (!call.output.isNullOrBlank()) {
-            val truncated = if (call.output.length > 200) {
-                call.output.take(200) + "…"
-            } else call.output
-            Surface(
-                color = MaterialTheme.colorScheme.surfaceContainerHighest,
-                shape = RoundedCornerShape(4.dp)
-            ) {
-                Text(
-                    truncated,
-                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp),
-                    style = MaterialTheme.typography.bodySmall.copy(
-                        fontFamily = FontFamily.Monospace,
-                        fontSize = 10.sp
-                    ),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 5,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
         }
     }
 }
 
-private fun formatArgValue(value: Any?): String = when (value) {
-    is String -> "\"${value.take(50)}${if (value.length > 50) "…" else ""}\""
-    is Map<*, *> -> "{…}"
-    is List<*> -> "[${value.size}]"
-    null -> "null"
-    else -> value.toString().take(30)
+private fun toolCallSummary(call: ToolCallDto): String {
+    val args = call.arguments
+    if (args.isNullOrEmpty()) return call.name
+    val priorityKeys = listOf("command", "path", "query", "message", "content", "text", "input", "code", "url", "name", "tool")
+    val value = priorityKeys.firstNotNullOfOrNull { args[it]?.toString() }
+        ?: args.values.firstOrNull()?.toString()
+        ?: return call.name
+    val flat = value.replace('\n', ' ').trim()
+    val truncated = flat.take(35)
+    return if (flat.length > 35) "${call.name}($truncated…)" else "${call.name}($truncated)"
+}
+
+private fun prettyJsonOrRaw(text: String): String = try {
+    JSONObject(text).toString(2)
+} catch (_: Exception) {
+    try { JSONArray(text).toString(2) } catch (_: Exception) { text }
 }

@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
@@ -40,6 +41,8 @@ import org.opencrow.app.ui.theme.LocalSpacing
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ChatScreen(
+    pendingConversationId: String? = null,
+    onConversationOpened: () -> Unit = {},
     onNavigateToSettings: () -> Unit,
     onUnpaired: () -> Unit
 ) {
@@ -52,21 +55,29 @@ fun ChatScreen(
     val spacing = LocalSpacing.current
     val listState = rememberLazyListState()
 
-    // Auto-scroll on new messages (not on every streaming token)
+    // Open a specific conversation when arriving from AssistScreen
+    LaunchedEffect(pendingConversationId) {
+        if (pendingConversationId != null) {
+            viewModel.selectConversation(pendingConversationId)
+            onConversationOpened()
+        }
+    }
+
+    // Auto-scroll on new messages
     val messageCount = state.messages.size
     LaunchedEffect(messageCount, state.sending) {
         if (state.messages.isNotEmpty()) {
             listState.animateScrollToItem(messageCount - 1)
         }
     }
-    // Scroll to bottom during streaming, but only when content grows significantly
+    // Instant scroll during streaming to avoid competing animations
     val lastMessageLength = state.messages.lastOrNull()?.content?.length ?: 0
     val streamingScrollThreshold = remember { mutableIntStateOf(0) }
     LaunchedEffect(state.streaming, lastMessageLength) {
         if (state.streaming && lastMessageLength - streamingScrollThreshold.intValue > 50) {
             streamingScrollThreshold.intValue = lastMessageLength
             if (state.messages.isNotEmpty()) {
-                listState.animateScrollToItem(state.messages.size - 1)
+                listState.scrollToItem(state.messages.size - 1)
             }
         }
         if (!state.streaming) streamingScrollThreshold.intValue = 0
@@ -90,68 +101,17 @@ fun ChatScreen(
 
     Box(modifier = Modifier.fillMaxSize()) {
         Scaffold(
-            containerColor = MaterialTheme.colorScheme.background,
-            topBar = {
-                TopAppBar(
-                    title = {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            if (isTelegramChat) {
-                                Icon(
-                                    Icons.Outlined.Lock,
-                                    contentDescription = "Read-only",
-                                    modifier = Modifier
-                                        .size(16.dp)
-                                        .padding(end = 4.dp),
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                            Text(
-                                text = activeConversation?.title ?: "openCrow",
-                                style = MaterialTheme.typography.titleLarge,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        }
-                    },
-                    navigationIcon = {
-                        Row {
-                            IconButton(onClick = { viewModel.toggleHistory(true) }) {
-                                Icon(
-                                    Icons.Outlined.History,
-                                    contentDescription = "Chat history",
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                            if (hasActiveChat) {
-                                IconButton(onClick = { viewModel.clearActiveConversation() }) {
-                                    Icon(
-                                        Icons.Filled.Add,
-                                        contentDescription = "New chat",
-                                        tint = MaterialTheme.colorScheme.primary
-                                    )
-                                }
-                            }
-                        }
-                    },
-                    actions = {
-                        IconButton(onClick = onNavigateToSettings) {
-                            Icon(
-                                Icons.Outlined.Settings,
-                                contentDescription = "Settings",
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    },
-                    colors = TopAppBarDefaults.topAppBarColors(
-                        containerColor = MaterialTheme.colorScheme.surfaceContainer
-                    )
-                )
-            }
+            containerColor = MaterialTheme.colorScheme.background
         ) { padding ->
-            Column(
+            Box(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(padding)
+            ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(top = 56.dp)
                     .imePadding()
             ) {
                 // Messages area
@@ -235,14 +195,23 @@ fun ChatScreen(
                         enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),
                         exit = slideOutVertically(targetOffsetY = { it }) + fadeOut()
                     ) {
-                        Surface(
-                            color = MaterialTheme.colorScheme.surfaceContainerLowest,
-                            modifier = Modifier.fillMaxWidth()
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = spacing.md)
+                                .padding(bottom = spacing.xs)
                         ) {
-                            AttachmentPreviewRow(
-                                attachments = state.attachments,
-                                onRemove = viewModel::removeAttachment
-                            )
+                            Surface(
+                                color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                                shape = RoundedCornerShape(16.dp),
+                                shadowElevation = 4.dp,
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                AttachmentPreviewRow(
+                                    attachments = state.attachments,
+                                    onRemove = viewModel::removeAttachment
+                                )
+                            }
                         }
                     }
 
@@ -267,7 +236,54 @@ fun ChatScreen(
                     )
                 }
             }
-        }
+
+            // Floating navigation buttons — history (top-left) and new chat (top-right)
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .align(Alignment.TopCenter)
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Surface(
+                    onClick = { viewModel.toggleHistory(true) },
+                    shape = CircleShape,
+                    color = MaterialTheme.colorScheme.surfaceContainerHighest,
+                    shadowElevation = 4.dp,
+                    modifier = Modifier.size(44.dp)
+                ) {
+                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        Icon(
+                            Icons.Default.Menu,
+                            contentDescription = "Chat history",
+                            tint = MaterialTheme.colorScheme.onSurface,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                }
+                if (hasActiveChat) {
+                    Surface(
+                        onClick = { viewModel.clearActiveConversation() },
+                        shape = CircleShape,
+                        color = MaterialTheme.colorScheme.surfaceContainerHighest,
+                        shadowElevation = 4.dp,
+                        modifier = Modifier.size(44.dp)
+                    ) {
+                        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            Icon(
+                                Icons.Outlined.AutoAwesome,
+                                contentDescription = "New chat",
+                                tint = MaterialTheme.colorScheme.onSurface,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                    }
+                } else {
+                    Spacer(Modifier.size(44.dp))
+                }
+            }
+            } // closes inner Box
 
         // History bottom sheet overlay
         HistorySheet(
@@ -281,34 +297,41 @@ fun ChatScreen(
         )
     }
 }
+}
 
 @Composable
 private fun TelegramReadOnlyBar() {
     val spacing = LocalSpacing.current
-    Surface(
-        color = MaterialTheme.colorScheme.surfaceContainerLowest,
-        tonalElevation = 3.dp,
-        modifier = Modifier.fillMaxWidth()
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .navigationBarsPadding()
+            .padding(start = spacing.md, end = spacing.md, bottom = spacing.md)
     ) {
-        Row(
-            modifier = Modifier
-                .padding(horizontal = spacing.md, vertical = spacing.md)
-                .navigationBarsPadding(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.Center
+        Surface(
+            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+            shape = RoundedCornerShape(20.dp),
+            modifier = Modifier.fillMaxWidth()
         ) {
-            Icon(
-                Icons.Outlined.Lock,
-                contentDescription = null,
-                modifier = Modifier.size(16.dp),
-                tint = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Spacer(Modifier.width(spacing.sm))
-            Text(
-                "Telegram conversations are read-only",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
+            Row(
+                modifier = Modifier
+                    .padding(horizontal = spacing.md, vertical = spacing.md),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.Center
+            ) {
+                Icon(
+                    Icons.Outlined.Lock,
+                    contentDescription = null,
+                    modifier = Modifier.size(16.dp),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.width(spacing.sm))
+                Text(
+                    "Telegram conversations are read-only",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
         }
     }
 }
@@ -371,17 +394,23 @@ private fun ChatInputBar(
         }
     }
 
-    Surface(
-        color = MaterialTheme.colorScheme.surfaceContainerLowest,
-        tonalElevation = 3.dp,
-        modifier = Modifier.fillMaxWidth()
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .navigationBarsPadding()
+            .padding(start = spacing.md, end = spacing.md, bottom = spacing.md)
     ) {
-        Column {
+        Surface(
+            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+            shape = RoundedCornerShape(20.dp),
+            shadowElevation = 8.dp,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column {
             Row(
                 modifier = Modifier
-                    .padding(horizontal = spacing.sm, vertical = spacing.sm)
-                    .navigationBarsPadding(),
-                verticalAlignment = Alignment.Bottom,
+                    .padding(horizontal = spacing.sm, vertical = spacing.sm),
+                verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(spacing.xs)
             ) {
                 Box {
@@ -433,18 +462,6 @@ private fun ChatInputBar(
                     }
                 }
 
-                IconButton(
-                    onClick = { /* placeholder for model selector */ },
-                    enabled = false,
-                    modifier = Modifier.size(40.dp)
-                ) {
-                    Icon(
-                        Icons.Outlined.SmartToy,
-                        contentDescription = "Model",
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
-                    )
-                }
-
                 TextField(
                     value = composing,
                     onValueChange = onComposingChange,
@@ -458,13 +475,13 @@ private fun ChatInputBar(
                     colors = TextFieldDefaults.colors(
                         focusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
                         unfocusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-                        focusedIndicatorColor = MaterialTheme.colorScheme.primary,
+                        focusedIndicatorColor = Color.Transparent,
                         unfocusedIndicatorColor = Color.Transparent,
                         cursorColor = MaterialTheme.colorScheme.primary
                     ),
                     textStyle = MaterialTheme.typography.bodyMedium,
                     maxLines = 4,
-                    shape = MaterialTheme.shapes.small
+                    shape = RoundedCornerShape(12.dp)
                 )
 
                 IconButton(
@@ -503,6 +520,7 @@ private fun ChatInputBar(
                     Icon(Icons.Filled.Send, contentDescription = "Send", modifier = Modifier.size(18.dp))
                 }
             }
+        }
         }
     }
 }
