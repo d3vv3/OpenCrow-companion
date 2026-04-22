@@ -13,6 +13,7 @@ data class HealthResponse(val status: String?, val name: String?, val env: Strin
 
 // ─── Auth ───
 data class RefreshRequest(val refreshToken: String)
+data class LogoutRequest(val deviceId: String?)
 data class AuthResponse(val user: UserDto?, val tokens: TokensDto)
 data class UserDto(val id: String, val username: String)
 data class TokensDto(val accessToken: String, val refreshToken: String)

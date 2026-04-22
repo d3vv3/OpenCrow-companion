@@ -28,6 +28,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
@@ -51,8 +52,9 @@ fun ChatScreen(
 ) {
     val context = LocalContext.current
     val app = context.applicationContext as OpenCrowApp
+    val keyboardController = LocalSoftwareKeyboardController.current
     val viewModel: ChatViewModel = viewModel(
-        factory = ChatViewModel.Factory(app.container.conversationRepository, app)
+        factory = ChatViewModel.Factory(app.container.conversationRepository, app.container.configRepository, app)
     )
     val state by viewModel.uiState.collectAsState()
     val spacing = LocalSpacing.current
@@ -64,6 +66,15 @@ fun ChatScreen(
             viewModel.selectConversation(pendingConversationId)
             onConversationOpened()
         }
+    }
+
+    // Permission request launcher wired to ViewModel
+    val permissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted -> viewModel.onPermissionResult(granted) }
+
+    LaunchedEffect(state.pendingPermission) {
+        state.pendingPermission?.let { permissionLauncher.launch(it) }
     }
 
     // Auto-scroll on new messages
@@ -107,7 +118,7 @@ fun ChatScreen(
         if (state.showSystemChats) {
             state.conversations
         } else {
-            state.conversations.filter { !it.isAutomatic || it.automationKind == "heartbeat" }
+            state.conversations.filter { !it.isAutomatic }
         }
     }
 
@@ -127,7 +138,10 @@ fun ChatScreen(
                 onDragStart = { totalDrag = 0f },
                 onHorizontalDrag = { _, dx -> totalDrag += dx },
                 onDragEnd = {
-                    if (totalDrag > 80f && !state.showHistory) viewModel.toggleHistory(true)
+                    if (totalDrag > 80f && !state.showHistory) {
+                        keyboardController?.hide()
+                        viewModel.toggleHistory(true)
+                    }
                     totalDrag = 0f
                 },
                 onDragCancel = { totalDrag = 0f }
@@ -346,10 +360,12 @@ fun ChatScreen(
             conversations = visibleConversations,
             activeId = state.activeConversationId,
             showSystemChats = state.showSystemChats,
+            isRefreshing = state.refreshingConversations,
+            onRefresh = viewModel::refreshConversations,
             onToggleSystemChats = viewModel::toggleSystemChats,
             onSelectConversation = viewModel::selectConversation,
             onDeleteConversation = viewModel::deleteConversation,
-            onNavigateToSettings = onNavigateToSettings,
+            onLogout = { viewModel.logout { onUnpaired() } },
             onDismiss = { viewModel.toggleHistory(false) }
         )
     }
@@ -362,7 +378,6 @@ private fun TelegramReadOnlyBar() {
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .navigationBarsPadding()
             .padding(start = spacing.md, end = spacing.md, bottom = spacing.md)
     ) {
         Surface(
@@ -454,7 +469,6 @@ private fun ChatInputBar(
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .navigationBarsPadding()
             .padding(start = spacing.md, end = spacing.md, bottom = spacing.md)
     ) {
         Surface(

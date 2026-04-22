@@ -43,7 +43,8 @@ data class AssistUiState(
     val attachScreenshot: Boolean = false,
     val recording: Boolean = false,
     val transcribing: Boolean = false,
-    val attachmentsByMessageId: Map<String, List<Attachment>> = emptyMap()
+    val attachmentsByMessageId: Map<String, List<Attachment>> = emptyMap(),
+    val pendingPermission: String? = null
 )
 
 class AssistViewModel(
@@ -60,6 +61,25 @@ class AssistViewModel(
     val uiState: StateFlow<AssistUiState> = _uiState.asStateFlow()
 
     private val streamingBuffer = StringBuilder()
+
+    // ─── Runtime permission helpers ──────────────────────────────────────────
+    private var permissionDeferred: kotlinx.coroutines.CompletableDeferred<Boolean>? = null
+
+    suspend fun requestPermission(permission: String): Boolean {
+        if (androidx.core.content.ContextCompat.checkSelfPermission(appContext, permission) ==
+            android.content.pm.PackageManager.PERMISSION_GRANTED) return true
+        val deferred = kotlinx.coroutines.CompletableDeferred<Boolean>()
+        permissionDeferred = deferred
+        _uiState.update { it.copy(pendingPermission = permission) }
+        return deferred.await()
+    }
+
+    fun onPermissionResult(granted: Boolean) {
+        _uiState.update { it.copy(pendingPermission = null) }
+        permissionDeferred?.complete(granted)
+        permissionDeferred = null
+    }
+    // ────────────────────────────────────────────────────────────────────────
 
     private var mediaRecorder: MediaRecorder? = null
     private var audioFile: File? = null
@@ -307,6 +327,16 @@ class AssistViewModel(
                         }
                         is StreamEvent.ToolCall -> {}
                         is StreamEvent.ToolResult -> {}
+                        is StreamEvent.ToolExecuteLocal -> {
+                            val app2 = appContext as? org.opencrow.app.OpenCrowApp
+                            if (app2 != null) {
+                                val executor = org.opencrow.app.data.local.LocalToolExecutor(appContext, app2.container.apiClient, ::requestPermission)
+                                val gson = com.google.gson.Gson()
+                                val type = object : com.google.gson.reflect.TypeToken<Map<String, Any>>() {}.type
+                                val argsMap: Map<String, Any> = gson.fromJson(event.arguments, type) ?: emptyMap()
+                                viewModelScope.launch { executor.execute(event.callId, event.name, argsMap) }
+                            }
+                        }
                     }
                 }
 

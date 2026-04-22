@@ -105,7 +105,9 @@ class ConversationRepository(
     }
 
     fun streamMessage(conversationId: String, text: String): kotlinx.coroutines.flow.Flow<StreamEvent> {
-        return streamingClient.stream(CompleteRequest(conversationId, text))
+        // deviceId is read from shared prefs synchronously via runBlocking - acceptable here since it's cached
+        val deviceId = kotlinx.coroutines.runBlocking { apiClient.getDeviceId() }
+        return streamingClient.stream(CompleteRequest(conversationId, text, deviceId = deviceId))
     }
 
     fun streamRegenerate(conversationId: String, messageId: String): kotlinx.coroutines.flow.Flow<StreamEvent> {

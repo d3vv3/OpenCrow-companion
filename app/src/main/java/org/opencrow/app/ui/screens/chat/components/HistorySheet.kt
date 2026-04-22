@@ -17,8 +17,11 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Delete
-import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material.icons.automirrored.outlined.ExitToApp
 import androidx.compose.material3.*
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.material3.pulltorefresh.PullToRefreshDefaults
+import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -41,16 +44,19 @@ import java.util.*
 import kotlin.math.absoluteValue
 import kotlin.math.roundToInt
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HistorySheet(
     visible: Boolean,
     conversations: List<ConversationDto>,
     activeId: String?,
     showSystemChats: Boolean,
+    isRefreshing: Boolean,
+    onRefresh: () -> Unit,
     onToggleSystemChats: (Boolean) -> Unit,
     onSelectConversation: (String) -> Unit,
     onDeleteConversation: (String) -> Unit,
-    onNavigateToSettings: () -> Unit,
+    onLogout: () -> Unit,
     onDismiss: () -> Unit
 ) {
     val spacing = LocalSpacing.current
@@ -125,8 +131,24 @@ fun HistorySheet(
                     color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.2f)
                 )
 
-                LazyColumn(
+                val pullState = rememberPullToRefreshState()
+                PullToRefreshBox(
+                    isRefreshing = isRefreshing,
+                    onRefresh = onRefresh,
+                    state = pullState,
                     modifier = Modifier.weight(1f).fillMaxWidth(),
+                    indicator = {
+                        PullToRefreshDefaults.Indicator(
+                            state = pullState,
+                            isRefreshing = isRefreshing,
+                            color = Color(0xFF22D3EE),           // cyan from DESIGN.md
+                            containerColor = MaterialTheme.colorScheme.surfaceContainerHighest,
+                            modifier = Modifier.align(Alignment.TopCenter)
+                        )
+                    }
+                ) {
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(
                         start = spacing.sm, end = spacing.sm,
                         top = spacing.sm, bottom = spacing.sm
@@ -146,21 +168,43 @@ fun HistorySheet(
                         }
                     }
                 }
+                }
 
                 HorizontalDivider(
                     color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.2f)
                 )
+                // Bottom row: [Logout] | [Show system chats ─── Switch]
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = spacing.md, vertical = 10.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
+                        .navigationBarsPadding()
+                        .padding(horizontal = spacing.md, vertical = 6.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
+                    IconButton(
+                        onClick = { onDismiss(); onLogout() },
+                        modifier = Modifier.size(44.dp)
+                    ) {
+                        Icon(
+                            Icons.AutoMirrored.Outlined.ExitToApp,
+                            contentDescription = "Logout",
+                            tint = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.size(26.dp)
+                        )
+                    }
+                    Spacer(Modifier.width(spacing.sm))
+                    Box(
+                        modifier = Modifier
+                            .width(1.dp)
+                            .height(24.dp)
+                            .background(MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+                    )
+                    Spacer(Modifier.width(spacing.sm))
                     Text(
                         "Show system chats",
                         style = MaterialTheme.typography.bodyLarge,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.weight(1f)
                     )
                     Switch(
                         checked = showSystemChats,
@@ -171,36 +215,7 @@ fun HistorySheet(
                         )
                     )
                 }
-                HorizontalDivider(
-                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.2f)
-                )
-                Spacer(Modifier.height(4.dp))
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .navigationBarsPadding()
-                        .clickable {
-                            onDismiss()
-                            onNavigateToSettings()
-                        }
-                        .padding(horizontal = spacing.md, vertical = 10.dp),
-                    horizontalArrangement = Arrangement.spacedBy(spacing.sm),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Icon(
-                        Icons.Outlined.Settings,
-                        contentDescription = "Configuration",
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(26.dp)
-                    )
-                    Text(
-                        "Configuration",
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-                // Extra safe space below the last row so thumb doesn't reach the edge
-                Spacer(Modifier.height(spacing.md))
+                Spacer(Modifier.height(spacing.sm))
             }
         }
     }
@@ -287,12 +302,11 @@ private fun SwipeToDeleteRow(
                 )
             }
     ) {
-        // Delete background -- only rendered when swiping
+        // Delete background -- always full-opaque when swiping starts
         if (revealFraction > 0.01f) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .graphicsLayer { alpha = revealFraction }
                     .background(deleteBackground, RoundedCornerShape(12.dp))
                     .padding(horizontal = 20.dp),
                 contentAlignment = if (offsetX.value > 0) Alignment.CenterStart else Alignment.CenterEnd
@@ -301,11 +315,12 @@ private fun SwipeToDeleteRow(
             }
         }
 
-        // Card slides on top
+        // Card slides on top -- offset first so background travels with the card, revealing red beneath
         Box(
             modifier = Modifier
                 .fillMaxSize()
                 .offset { IntOffset(offsetX.value.roundToInt(), 0) }
+                .background(MaterialTheme.colorScheme.surfaceContainerHighest, RoundedCornerShape(12.dp))
         ) {
             content()
         }
@@ -324,12 +339,19 @@ private fun ConversationRow(
             conv.title.contains("[telegram]", ignoreCase = true)
 
     val displayTitle = remember(conv.title) {
-        conv.title.replace("[telegram]", "", ignoreCase = true).trim().ifBlank { "Untitled" }
+        conv.title
+            .replace("[telegram]", "", ignoreCase = true)
+            .replace(Regex("^\\[heartbeat\\]\\s*", RegexOption.IGNORE_CASE), "")
+            .replace(Regex("^heartbeat:\\s*", RegexOption.IGNORE_CASE), "")
+            .replace(Regex("^scheduled task:\\s*", RegexOption.IGNORE_CASE), "")
+            .trim().ifBlank { "Untitled" }
     }
     val relativeTime = remember(conv.updatedAt) { formatRelativeDate(conv.updatedAt) }
 
     val pillLabel: String? = when {
         isTelegram -> "telegram"
+        conv.isAutomatic && conv.automationKind == "heartbeat" -> "heartbeat"
+        conv.isAutomatic && conv.automationKind == "scheduled_task" -> "scheduled"
         conv.isAutomatic && conv.automationKind != null -> conv.automationKind
         else -> null
     }
@@ -387,9 +409,10 @@ private fun ConversationRow(
                 )
                 if (pillLabel != null) {
                     val resolvedColor = when (pillLabel) {
-                        "telegram" -> MaterialTheme.colorScheme.tertiary
-                        "scheduled_task" -> MaterialTheme.colorScheme.secondary
-                        else -> MaterialTheme.colorScheme.primary
+                        "telegram"  -> MaterialTheme.colorScheme.tertiary
+                        "scheduled" -> MaterialTheme.colorScheme.secondary
+                        "heartbeat" -> MaterialTheme.colorScheme.primary
+                        else        -> MaterialTheme.colorScheme.primary
                     }
                     TypePill(pillLabel, resolvedColor)
                 }

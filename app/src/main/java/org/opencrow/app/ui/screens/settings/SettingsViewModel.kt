@@ -125,8 +125,9 @@ class SettingsViewModel(
         }
     }
 
-    fun logout(onDone: () -> Unit) {
+    fun logout(context: Context, onDone: () -> Unit) {
         viewModelScope.launch {
+            HeartbeatScheduler.cancel(context)
             configRepository.logout()
             onDone()
         }

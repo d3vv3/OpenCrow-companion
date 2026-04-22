@@ -15,6 +15,9 @@ interface OpenCrowApi {
     @POST("v1/auth/refresh")
     suspend fun refreshToken(@Body body: RefreshRequest): Response<AuthResponse>
 
+    @POST("v1/auth/logout")
+    suspend fun logout(@Body body: LogoutRequest): Response<Unit>
+
     // ─── Conversations ───
     @GET("v1/conversations")
     suspend fun listConversations(): Response<ConversationsResponse>
@@ -55,6 +58,9 @@ interface OpenCrowApi {
         @Body body: RegisterDeviceRequest
     ): Response<RegisterDeviceResponse>
 
+    @DELETE("v1/devices/{id}")
+    suspend fun deleteDevice(@Path("id") deviceId: String): Response<Unit>
+
     @GET("v1/devices/tasks")
     suspend fun getDeviceTasks(@Query("target") target: String): Response<DeviceTasksResponse>
 
@@ -62,6 +68,13 @@ interface OpenCrowApi {
     suspend fun completeDeviceTask(
         @Path("id") taskId: String,
         @Body body: CompleteDeviceTaskRequest
+    ): Response<Unit>
+
+    // ─── Local Tool Results ───
+    @POST("v1/tool-results/{callId}")
+    suspend fun postToolResult(
+        @Path("callId") callId: String,
+        @Body body: ToolResultRequest
     ): Response<Unit>
 
     // ─── Config ───
@@ -74,4 +87,7 @@ interface OpenCrowApi {
     // ─── Heartbeat Events ───
     @GET("v1/heartbeat/events")
     suspend fun getHeartbeatEvents(): Response<HeartbeatEventsResponse>
+
+    @GET("v1/heartbeat")
+    suspend fun getHeartbeatConfig(): Response<HeartbeatConfigDto>
 }

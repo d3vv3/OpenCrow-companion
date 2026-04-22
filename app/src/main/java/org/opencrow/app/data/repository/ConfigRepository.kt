@@ -4,6 +4,7 @@ import android.util.Log
 import org.opencrow.app.data.local.ConfigDao
 import org.opencrow.app.data.local.entity.AppConfig
 import org.opencrow.app.data.remote.ApiClient
+import org.opencrow.app.data.remote.dto.LogoutRequest
 import org.opencrow.app.data.remote.dto.UserConfigDto
 
 class ConfigRepository(
@@ -41,6 +42,15 @@ class ConfigRepository(
     }
 
     suspend fun logout() {
+        val deviceId = apiClient.getDeviceId()
+        try {
+            if (deviceId != null) {
+                apiClient.api.deleteDevice(deviceId)
+            }
+        } catch (_: Exception) {}
+        try {
+            apiClient.api.logout(LogoutRequest(deviceId))
+        } catch (_: Exception) {}
         apiClient.clearTokens()
     }
 

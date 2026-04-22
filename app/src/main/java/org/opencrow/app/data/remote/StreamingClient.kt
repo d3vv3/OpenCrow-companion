@@ -24,6 +24,8 @@ sealed class StreamEvent {
     data class Delta(val token: String) : StreamEvent()
     data class ToolCall(val name: String, val arguments: String, val kind: String) : StreamEvent()
     data class ToolResult(val name: String, val result: String, val isError: Boolean = false) : StreamEvent()
+    /** Server wants the device to execute a local tool and return the result via POST /v1/tool-results/{callId} */
+    data class ToolExecuteLocal(val callId: String, val name: String, val arguments: String) : StreamEvent()
     data class Done(val output: String, val messageId: String? = null) : StreamEvent()
     data class Error(val error: String) : StreamEvent()
 }
@@ -142,6 +144,14 @@ class StreamingClient(private val apiClient: ApiClient) {
                         name = map["name"] as? String ?: "",
                         result = map["result"] as? String ?: "",
                         isError = map["isError"] == "true"
+                    )
+                }
+                "tool_execute_local" -> {
+                    val map = parseMap(data)
+                    StreamEvent.ToolExecuteLocal(
+                        callId = map["callId"] as? String ?: "",
+                        name = map["name"] as? String ?: "",
+                        arguments = map["arguments"] as? String ?: "{}"
                     )
                 }
                 "done" -> {

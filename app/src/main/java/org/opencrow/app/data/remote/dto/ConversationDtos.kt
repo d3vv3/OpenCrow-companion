@@ -33,7 +33,8 @@ data class CreateMessageRequest(val role: String, val content: String)
 // ─── Orchestrator ───
 data class CompleteRequest(
     val conversationId: String,
-    val message: String
+    val message: String,
+    val deviceId: String? = null  // sent so server can inject local tool specs
 )
 data class CompleteResponse(
     val provider: String?,

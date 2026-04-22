@@ -24,6 +24,7 @@ import org.opencrow.app.data.remote.dto.ConversationDto
 import org.opencrow.app.data.remote.dto.MessageDto
 import org.opencrow.app.data.remote.dto.ToolCallDto
 import org.opencrow.app.data.remote.dto.ToolCallRecordDto
+import org.opencrow.app.data.repository.ConfigRepository
 import org.opencrow.app.data.repository.ConversationRepository
 import java.io.File
 import java.text.SimpleDateFormat
@@ -65,6 +66,7 @@ data class ChatUiState(
     val sending: Boolean = false,
     val streaming: Boolean = false,
     val refreshingMessages: Boolean = false,
+    val refreshingConversations: Boolean = false,
     val loadingMessages: Boolean = false,
     val showHistory: Boolean = false,
     val showSystemChats: Boolean = false,
@@ -73,11 +75,13 @@ data class ChatUiState(
     val transcribedMessageIds: Set<String> = emptySet(),
     val toolCallsByMessageId: Map<String, List<ToolCallDto>> = emptyMap(),
     val attachments: List<Attachment> = emptyList(),
-    val attachmentsByMessageId: Map<String, List<Attachment>> = emptyMap()
+    val attachmentsByMessageId: Map<String, List<Attachment>> = emptyMap(),
+    val pendingPermission: String? = null
 )
 
 class ChatViewModel(
     private val repository: ConversationRepository,
+    private val configRepository: ConfigRepository,
     private val appContext: Context
 ) : ViewModel() {
 
@@ -97,6 +101,29 @@ class ChatViewModel(
      */
     private val streamingBuffer = StringBuilder()
     private var streamingAssistantId: String? = null
+
+    // ─── Runtime permission helpers ──────────────────────────────────────────
+    private var permissionDeferred: kotlinx.coroutines.CompletableDeferred<Boolean>? = null
+
+    /**
+     * Called from the executor coroutine to request a permission from the UI.
+     * Suspends until the user accepts or denies.
+     */
+    suspend fun requestPermission(permission: String): Boolean {
+        if (androidx.core.content.ContextCompat.checkSelfPermission(appContext, permission) ==
+            android.content.pm.PackageManager.PERMISSION_GRANTED) return true
+        val deferred = kotlinx.coroutines.CompletableDeferred<Boolean>()
+        permissionDeferred = deferred
+        _uiState.update { it.copy(pendingPermission = permission) }
+        return deferred.await()
+    }
+
+    fun onPermissionResult(granted: Boolean) {
+        _uiState.update { it.copy(pendingPermission = null) }
+        permissionDeferred?.complete(granted)
+        permissionDeferred = null
+    }
+    // ────────────────────────────────────────────────────────────────────────
 
     init {
         loadConversations()
@@ -154,10 +181,12 @@ class ChatViewModel(
 
     fun refreshConversations() {
         viewModelScope.launch {
+            _uiState.update { it.copy(refreshingConversations = true) }
             val (_, fresh) = repository.loadConversations()
             if (fresh != null) {
                 _uiState.update { it.copy(conversations = fresh) }
             }
+            _uiState.update { it.copy(refreshingConversations = false) }
         }
     }
 
@@ -484,6 +513,16 @@ class ChatViewModel(
                                 }
                             }
                         }
+                        is StreamEvent.ToolExecuteLocal -> {
+                            val app2 = appContext as? org.opencrow.app.OpenCrowApp
+                            if (app2 != null) {
+                                val executor = org.opencrow.app.data.local.LocalToolExecutor(appContext, app2.container.apiClient, ::requestPermission)
+                                val argsMap = parseToolArguments(event.arguments)
+                                viewModelScope.launch {
+                                    executor.execute(event.callId, event.name, argsMap.orEmpty())
+                                }
+                            }
+                        }
                         is StreamEvent.Done -> {
                             streamingBuffer.clear()
                             streamingAssistantId = null
@@ -712,7 +751,19 @@ class ChatViewModel(
                                     )
                                 }
                             }
-                            pendingToolCall = null
+                             pendingToolCall = null
+                        }
+                        is StreamEvent.ToolExecuteLocal -> {
+                            // Server wants the device to execute a local tool and return the result.
+                            // Launch in a child coroutine so the stream continues collecting.
+                            val app2 = appContext as? org.opencrow.app.OpenCrowApp
+                            if (app2 != null) {
+                                val executor = org.opencrow.app.data.local.LocalToolExecutor(appContext, app2.container.apiClient, ::requestPermission)
+                                val argsMap = parseToolArguments(event.arguments)
+                                viewModelScope.launch {
+                                    executor.execute(event.callId, event.name, argsMap.orEmpty())
+                                }
+                            }
                         }
                          is StreamEvent.Done -> {
                              streamingBuffer.clear()
@@ -902,6 +953,14 @@ class ChatViewModel(
         }
     }
 
+    fun logout(onDone: () -> Unit) {
+        viewModelScope.launch {
+            org.opencrow.app.heartbeat.HeartbeatScheduler.cancel(appContext)
+            configRepository.logout()
+            onDone()
+        }
+    }
+
     override fun onCleared() {
         super.onCleared()
         try {
@@ -909,10 +968,10 @@ class ChatViewModel(
         } catch (_: Exception) {}
     }
 
-    class Factory(private val repository: ConversationRepository, private val appContext: Context) : ViewModelProvider.Factory {
+    class Factory(private val repository: ConversationRepository, private val configRepository: ConfigRepository, private val appContext: Context) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T {
-            return ChatViewModel(repository, appContext) as T
+            return ChatViewModel(repository, configRepository, appContext) as T
         }
     }
 }

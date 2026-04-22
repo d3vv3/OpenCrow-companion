@@ -10,8 +10,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import org.opencrow.app.data.local.LocalToolCapabilities
 import org.opencrow.app.data.remote.ApiClient
-import org.opencrow.app.data.remote.dto.DeviceCapability
 import org.opencrow.app.data.remote.dto.QrPayload
 import org.opencrow.app.data.remote.dto.RegisterDeviceRequest
 
@@ -96,15 +96,8 @@ class QrScanViewModel(
                 }
 
                 // Register device capabilities
-                val capabilities = listOf(
-                    DeviceCapability("set_alarm", "Set a one-time or recurring alarm"),
-                    DeviceCapability("create_contact", "Add a contact to the phone's address book"),
-                    DeviceCapability("make_call", "Initiate a phone call to a number"),
-                    DeviceCapability("send_sms", "Send an SMS to a number"),
-                    DeviceCapability("create_calendar_event", "Add an event to the calendar")
-                )
                 val registerResp = try {
-                    apiClient.api.registerDevice(payload.id, RegisterDeviceRequest(capabilities))
+                    apiClient.api.registerDevice(payload.id, RegisterDeviceRequest(LocalToolCapabilities.all))
                 } catch (e: Exception) {
                     Log.e(TAG, "Device register failed: ${e.message}", e)
                     _uiState.update {

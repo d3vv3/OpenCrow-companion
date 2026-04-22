@@ -1,16 +1,21 @@
 package org.opencrow.app.heartbeat
 
-import android.Manifest
+import android.app.NotificationChannel
+import android.app.NotificationManager
 import android.content.ContentResolver
 import android.content.Context
 import android.content.pm.PackageManager
 import android.database.Cursor
 import android.provider.CalendarContract
 import android.util.Log
+import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import org.opencrow.app.OpenCrowApp
+import org.opencrow.app.R
+import org.opencrow.app.data.local.LocalToolCapabilities
+import org.opencrow.app.data.local.LocalToolExecutor
 import org.opencrow.app.data.remote.ApiClient
 import org.opencrow.app.data.remote.dto.*
 import java.text.SimpleDateFormat
@@ -23,6 +28,8 @@ class HeartbeatWorker(
 
     companion object {
         private const val TAG = "HeartbeatWorker"
+        private const val NOTIF_CHANNEL_HEARTBEAT = "opencrow_heartbeat"
+        private const val NOTIF_ID_HEARTBEAT = 9001
     }
 
     override suspend fun doWork(): Result {
@@ -35,23 +42,45 @@ class HeartbeatWorker(
             val deviceId = apiClient.getDeviceId() ?: return Result.failure()
 
             registerDevice(apiClient, deviceId)
-            val notifications = checkNotifications(apiClient)
 
+            val tasks = pollDeviceTasks(apiClient, deviceId)
+
+            // ── 1. Execute structured local-tool tasks immediately ──────────
+            val toolTasks    = tasks.filter { it.toolName != null }
+            val promptTasks  = tasks.filter { it.toolName == null }
+
+            for (task in toolTasks) {
+                executeLocalTask(apiClient, task)
+            }
+
+            // ── 2. Fetch heartbeat config (prompt + interval) from server ──
+            val heartbeatConfig = fetchHeartbeatConfig(apiClient)
+            val serverPromptTemplate = heartbeatConfig?.heartbeatPrompt?.takeIf { it.isNotBlank() }
+
+            // Reschedule with server's interval if it differs from current schedule
+            // WorkManager enforces a minimum of 15 minutes regardless.
+            heartbeatConfig?.intervalSeconds?.let { secs ->
+                val mins = maxOf(15, secs / 60)
+                HeartbeatScheduler.schedule(applicationContext, mins)
+            }
+
+            // ── 3. Send heartbeat prompt (with remaining instruction tasks) ─
+            checkNotifications(apiClient)
             val calendarPrompt = queryCalendar()
             val dateTime = SimpleDateFormat("EEEE, MMMM d, yyyy 'at' HH:mm z", Locale.getDefault())
                 .format(Date())
 
-            val tasks = pollDeviceTasks(apiClient, deviceId)
-            val taskPrompt = buildTaskPrompt(tasks)
-            val heartbeatMessage = buildHeartbeatPrompt(dateTime, calendarPrompt, taskPrompt)
+            val taskPrompt = buildTaskPrompt(promptTasks)
+            val heartbeatMessage = buildHeartbeatPrompt(dateTime, calendarPrompt, taskPrompt, serverPromptTemplate)
 
             val response = sendHeartbeatChat(apiClient, heartbeatMessage)
 
             if (response != null && response.trim() != "HEARTBEAT_OK") {
                 Log.i(TAG, "Heartbeat action needed: $response")
+                showHeartbeatNotification(response.trim())
             }
 
-            completeTasks(apiClient, tasks, response)
+            completeTasks(apiClient, promptTasks, response)
             apiClient.persistCurrentTokens()
 
             app.container.conversationRepository.notifyConversationsChanged()
@@ -63,18 +92,21 @@ class HeartbeatWorker(
         }
     }
 
+    // ─── Helpers ─────────────────────────────────────────────────────────────
+
     private suspend fun registerDevice(apiClient: ApiClient, deviceId: String) {
-        val capabilities = listOf(
-            DeviceCapability("set_alarm", "Set a one-time or recurring alarm"),
-            DeviceCapability("create_contact", "Add a contact to the phone's address book"),
-            DeviceCapability("make_call", "Initiate a phone call to a number"),
-            DeviceCapability("send_sms", "Send an SMS to a number"),
-            DeviceCapability("create_calendar_event", "Add an event to the calendar")
-        )
         try {
-            apiClient.api.registerDevice(deviceId, RegisterDeviceRequest(capabilities))
+            apiClient.api.registerDevice(deviceId, RegisterDeviceRequest(LocalToolCapabilities.all))
         } catch (e: Exception) {
             Log.w(TAG, "Register failed: ${e.message}")
+        }
+    }
+
+    private suspend fun fetchHeartbeatConfig(apiClient: ApiClient): HeartbeatConfigDto? {
+        return try {
+            apiClient.api.getHeartbeatConfig().body()
+        } catch (_: Exception) {
+            null
         }
     }
 
@@ -87,8 +119,43 @@ class HeartbeatWorker(
         }
     }
 
+    /**
+     * Executes a task whose [toolName] + [toolArguments] are set on the server side.
+     */
+    private suspend fun executeLocalTask(apiClient: ApiClient, task: DeviceTaskDto) {
+        val toolName = task.toolName ?: return
+        val args     = task.toolArguments ?: emptyMap()
+
+        val executor = LocalToolExecutor(
+            context = applicationContext,
+            apiClient = apiClient,
+            requestPermission = { permission ->
+                ContextCompat.checkSelfPermission(applicationContext, permission) ==
+                        PackageManager.PERMISSION_GRANTED
+            }
+        )
+
+        try {
+            executor.execute(callId = task.id, toolName = toolName, args = args)
+            try {
+                apiClient.api.completeDeviceTask(
+                    task.id,
+                    CompleteDeviceTaskRequest(success = true, output = "executed via local tool executor")
+                )
+            } catch (_: Exception) {}
+        } catch (e: Exception) {
+            Log.e(TAG, "Local tool task ${task.id} failed", e)
+            try {
+                apiClient.api.completeDeviceTask(
+                    task.id,
+                    CompleteDeviceTaskRequest(success = false, output = e.message ?: "error")
+                )
+            } catch (_: Exception) {}
+        }
+    }
+
     private fun queryCalendar(): String {
-        if (ContextCompat.checkSelfPermission(applicationContext, Manifest.permission.READ_CALENDAR)
+        if (ContextCompat.checkSelfPermission(applicationContext, android.Manifest.permission.READ_CALENDAR)
             != PackageManager.PERMISSION_GRANTED
         ) {
             return "Calendar permission not granted."
@@ -169,7 +236,19 @@ class HeartbeatWorker(
         }
     }
 
-    private fun buildHeartbeatPrompt(dateTime: String, calendarPrompt: String, taskPrompt: String): String {
+    private fun buildHeartbeatPrompt(
+        dateTime: String,
+        calendarPrompt: String,
+        taskPrompt: String,
+        customTemplate: String?
+    ): String {
+        // If a custom template is set on the server, use it with variable substitution
+        if (!customTemplate.isNullOrBlank()) {
+            return customTemplate
+                .replace("{datetime}", dateTime)
+                .replace("{calendar}", calendarPrompt)
+                .replace("{tasks}", taskPrompt)
+        }
         return """[HEARTBEAT] This is an automatic self-check. Right now is $dateTime
 
 $calendarPrompt
@@ -199,6 +278,27 @@ If anything needs attention, respond concisely with what changed and what action
             Log.e(TAG, "Heartbeat chat failed", e)
             null
         }
+    }
+
+    private fun showHeartbeatNotification(message: String) {
+        val nm = applicationContext.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        if (nm.getNotificationChannel(NOTIF_CHANNEL_HEARTBEAT) == null) {
+            val ch = NotificationChannel(
+                NOTIF_CHANNEL_HEARTBEAT,
+                "openCrow Heartbeat",
+                NotificationManager.IMPORTANCE_DEFAULT
+            ).apply { description = "Heartbeat status notifications" }
+            nm.createNotificationChannel(ch)
+        }
+        val notif = NotificationCompat.Builder(applicationContext, NOTIF_CHANNEL_HEARTBEAT)
+            .setSmallIcon(R.mipmap.ic_launcher)
+            .setContentTitle("openCrow")
+            .setContentText(message.take(100))
+            .setStyle(NotificationCompat.BigTextStyle().bigText(message))
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .setAutoCancel(true)
+            .build()
+        nm.notify(NOTIF_ID_HEARTBEAT, notif)
     }
 
     private suspend fun completeTasks(apiClient: ApiClient, tasks: List<DeviceTaskDto>, response: String?) {

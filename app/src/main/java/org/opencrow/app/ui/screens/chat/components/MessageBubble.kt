@@ -58,7 +58,7 @@ fun MessageBubble(
             horizontalArrangement = Arrangement.End
         ) {
             Surface(
-                color = MaterialTheme.colorScheme.primaryContainer,
+                color = MaterialTheme.colorScheme.primary,
                 shape = userMessageShape,
                 modifier = Modifier
                     .widthIn(max = 280.dp)
@@ -101,13 +101,13 @@ fun MessageBubble(
                                         Icons.Default.InsertDriveFile,
                                         contentDescription = null,
                                         modifier = Modifier.size(14.dp),
-                                        tint = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.6f)
+                                    tint = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.6f)
                                     )
                                     Spacer(Modifier.width(spacing.xs))
                                     Text(
                                         att.name,
                                         style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f),
+                                        color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.8f),
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis
                                     )
@@ -125,13 +125,13 @@ fun MessageBubble(
                                     modifier = Modifier
                                         .size(14.dp)
                                         .padding(end = 4.dp),
-                                    tint = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.6f)
+                                    tint = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.6f)
                                 )
                             }
                             MarkdownText(
                                 text = message.content,
                                 style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onPrimaryContainer
+                                color = MaterialTheme.colorScheme.onPrimary
                             )
                         }
                     }
