@@ -77,6 +77,7 @@ data class TokenUsageDto(
 data class ToolCallsResponse(val toolCalls: List<ToolCallRecordDto>?)
 data class ToolCallRecordDto(
     val id: String,
+    val messageId: String?,
     val toolName: String,
     val kind: String?,
     val arguments: Map<String, Any>?,

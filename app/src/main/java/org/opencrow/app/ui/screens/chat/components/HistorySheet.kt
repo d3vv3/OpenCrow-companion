@@ -220,8 +220,12 @@ private fun SwipeToDeleteRow(
     var rowWidthPx by remember { mutableFloatStateOf(0f) }
     var crossedThreshold by remember { mutableStateOf(false) }
 
-    val errorContainerColor = MaterialTheme.colorScheme.errorContainer
-    val onErrorContainerColor = MaterialTheme.colorScheme.onErrorContainer
+    val isDarkTheme = isSystemInDarkTheme()
+    // errorContainer is too pale in light mode; use a solid red that works in both themes.
+    val deleteBackground = if (isDarkTheme) MaterialTheme.colorScheme.errorContainer
+                           else Color(0xFFB71C1C)  // Material Red 900 -- clearly visible in light
+    val deleteIcon = if (isDarkTheme) MaterialTheme.colorScheme.onErrorContainer
+                     else Color.White
 
     val revealFraction = (offsetX.value.absoluteValue / thresholdPx).coerceIn(0f, 1f)
 
@@ -289,11 +293,11 @@ private fun SwipeToDeleteRow(
                 modifier = Modifier
                     .fillMaxSize()
                     .graphicsLayer { alpha = revealFraction }
-                    .background(errorContainerColor, RoundedCornerShape(12.dp))
+                    .background(deleteBackground, RoundedCornerShape(12.dp))
                     .padding(horizontal = 20.dp),
                 contentAlignment = if (offsetX.value > 0) Alignment.CenterStart else Alignment.CenterEnd
             ) {
-                Icon(Icons.Outlined.Delete, contentDescription = "Delete", tint = onErrorContainerColor)
+                Icon(Icons.Outlined.Delete, contentDescription = "Delete", tint = deleteIcon)
             }
         }
 

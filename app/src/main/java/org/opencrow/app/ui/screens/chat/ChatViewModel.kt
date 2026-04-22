@@ -193,6 +193,7 @@ class ChatViewModel(
 
         viewModelScope.launch {
             val (cached, fresh) = repository.loadMessages(conversationId)
+            Log.d(TAG, "loadMessages: cached=${cached.size}, fresh=${fresh?.size}, ids=${fresh?.map { it.id + "(" + it.role + ")" }}")
             if (cached.isNotEmpty()) {
                 val processedCached = processMessages(cached)
                 _uiState.update { state ->
@@ -329,19 +330,22 @@ class ChatViewModel(
         val assistantMessages = messages.filter { it.role == "assistant" }
         if (assistantMessages.isEmpty()) return emptyMap()
 
-        // Pre-sort assistant messages by createdAt for binary search
+        // Pre-sort assistant messages by createdAt for timestamp fallback
         val sortedAssistants = assistantMessages.sortedBy { it.createdAt }
         val timestamps = sortedAssistants.map { it.createdAt }
+        val messageIdSet = assistantMessages.map { it.id }.toSet()
 
         for (tc in toolCalls) {
-            // Binary search for insertion point of tc.createdAt in sorted assistant timestamps.
-            // Tool calls happen mid-stream, so their createdAt is AFTER the owning assistant's
-            // createdAt (which is set at stream start). We want the LAST assistant before the
-            // tool call, i.e. sortedAssistants[idx - 1].
-            var idx = timestamps.binarySearch(tc.createdAt)
-            if (idx < 0) idx = -(idx + 1) // convert to insertion point
-            val ownerIdx = (idx - 1).coerceAtLeast(0)
-            val owner = sortedAssistants[ownerIdx]
+            // Prefer explicit messageId link (stored locally or sent by server)
+            val owner = if (tc.messageId != null && tc.messageId in messageIdSet) {
+                assistantMessages.first { it.id == tc.messageId }
+            } else {
+                // Timestamp fallback: assistant message is created AFTER tool calls complete,
+                // so find the first assistant whose createdAt >= tc.createdAt.
+                var idx = timestamps.binarySearch(tc.createdAt)
+                if (idx < 0) idx = -(idx + 1)
+                sortedAssistants[idx.coerceAtMost(sortedAssistants.size - 1)]
+            }
 
             result.getOrPut(owner.id) { mutableListOf() }.add(
                 ToolCallDto(
@@ -471,9 +475,8 @@ class ChatViewModel(
                         is StreamEvent.ToolResult -> {
                             val idx = streamToolCalls.indexOfLast { it.name == event.name }
                             if (idx >= 0) {
-                                val errored = isToolResultError(event.result)
                                 streamToolCalls[idx] = streamToolCalls[idx].copy(
-                                    status = if (errored) "error" else "success",
+                                    status = if (event.isError) "error" else "success",
                                     output = event.result
                                 )
                                 _uiState.update { state ->
@@ -509,9 +512,28 @@ class ChatViewModel(
                     }
                 }
 
-                // Cache the regenerated message
+                // Cache the regenerated message and any new tool calls so they survive
+                // the next loadMessages without a full server refresh.
                 _uiState.value.messages.find { it.id == messageId }?.let {
                     repository.cacheMessage(it)
+                }
+                if (streamToolCalls.isNotEmpty()) {
+                    val now2 = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US).format(Date())
+                    val recordDtos = streamToolCalls.mapIndexed { index, tc ->
+                        ToolCallRecordDto(
+                            id = "tc-${System.currentTimeMillis()}-$index",
+                            messageId = messageId,
+                            toolName = tc.name,
+                            kind = null,
+                            arguments = tc.arguments,
+                            output = tc.output,
+                            error = if (tc.status == "error") tc.output else null,
+                            durationMs = null,
+                            createdAt = now2
+                        )
+                    }
+                    // Replace all locally cached tool calls for this message with the fresh ones.
+                    repository.cacheToolCalls(convId, recordDtos)
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Regenerate failed", e)
@@ -638,6 +660,9 @@ class ChatViewModel(
                 streamingBuffer.clear()
                 var lastFlushTime = System.currentTimeMillis()
 
+                // Track the final (possibly server-assigned) assistant message ID
+                var finalAssistantId = assistantId
+
                 repository.streamMessage(convId, messageContent).collect { event ->
                     when (event) {
                         is StreamEvent.Delta -> {
@@ -676,9 +701,8 @@ class ChatViewModel(
                         is StreamEvent.ToolResult -> {
                             val idx = streamToolCalls.indexOfLast { it.name == event.name }
                             if (idx >= 0) {
-                                val errored = isToolResultError(event.result)
                                 streamToolCalls[idx] = streamToolCalls[idx].copy(
-                                    status = if (errored) "error" else "success",
+                                    status = if (event.isError) "error" else "success",
                                     output = event.result
                                 )
                                 _uiState.update { state ->
@@ -690,23 +714,34 @@ class ChatViewModel(
                             }
                             pendingToolCall = null
                         }
-                        is StreamEvent.Done -> {
-                            // Flush any remaining buffered content, then replace with final output
-                            streamingBuffer.clear()
-                            streamingAssistantId = null
-                            _uiState.update { state ->
-                                state.copy(
-                                    streaming = false,
-                                    messages = state.messages.map { msg ->
-                                        if (msg.id == assistantId) msg.copy(content = event.output)
-                                        else msg
-                                    },
-                                    conversations = state.conversations.map { conv ->
-                                        if (conv.id == convId) conv.copy(updatedAt = now) else conv
-                                    }.sortedByDescending { it.updatedAt }
-                                )
-                            }
-                        }
+                         is StreamEvent.Done -> {
+                             streamingBuffer.clear()
+                             Log.d(TAG, "Done event: messageId=${event.messageId}, outputLen=${event.output.length}")
+                             streamingAssistantId = null
+                             // Use server-assigned ID from done event; avoids creating a duplicate
+                             // assistant message via POST /messages after the stream completes.
+                             val serverMsgId = event.messageId
+                             finalAssistantId = serverMsgId ?: assistantId
+                             _uiState.update { state ->
+                                 val updatedToolCalls = if (serverMsgId != null && state.toolCallsByMessageId.containsKey(assistantId)) {
+                                     state.toolCallsByMessageId - assistantId + (serverMsgId to state.toolCallsByMessageId[assistantId]!!)
+                                 } else state.toolCallsByMessageId
+                                 state.copy(
+                                     streaming = false,
+                                     messages = state.messages.map { msg ->
+                                         if (msg.id == assistantId) msg.copy(
+                                             id = serverMsgId ?: assistantId,
+                                             content = event.output
+                                         )
+                                         else msg
+                                     },
+                                     toolCallsByMessageId = updatedToolCalls,
+                                     conversations = state.conversations.map { conv ->
+                                         if (conv.id == convId) conv.copy(updatedAt = now) else conv
+                                     }.sortedByDescending { it.updatedAt }
+                                 )
+                             }
+                         }
                         is StreamEvent.Error -> {
                             Log.e(TAG, "Stream error: ${event.error}")
                             streamingBuffer.clear()
@@ -725,16 +760,27 @@ class ChatViewModel(
                     }
                 }
 
-                // Cache final messages and tool calls
+                // The server already saved the assistant message and sent its UUID in the done
+                // event. Just cache it locally; do NOT call createMessage again or we'll create
+                // a duplicate in the database.
+                val assistantContent = _uiState.value.messages
+                    .find { it.id == finalAssistantId || it.id == assistantId }?.content.orEmpty()
+                val now2 = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US).format(Date())
+                val assistantToCache = MessageDto(
+                    id = finalAssistantId,
+                    conversationId = convId,
+                    role = "assistant",
+                    content = assistantContent,
+                    createdAt = now2
+                )
+                repository.cacheMessage(assistantToCache)
                 repository.cacheMessage(tempMsg)
-                _uiState.value.messages.find { it.id == assistantId }?.let {
-                    repository.cacheMessage(it)
-                }
                 if (streamToolCalls.isNotEmpty()) {
                     val now2 = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US).format(Date())
                     val recordDtos = streamToolCalls.mapIndexed { index, tc ->
                         ToolCallRecordDto(
                             id = "tc-${System.currentTimeMillis()}-$index",
+                            messageId = finalAssistantId,
                             toolName = tc.name,
                             kind = null,
                             arguments = tc.arguments,

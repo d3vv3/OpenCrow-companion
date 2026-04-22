@@ -195,7 +195,7 @@ private fun buildCodeBlock(call: ToolCallDto): String {
 }
 
 private fun prettyJsonOrRaw(text: String): String = try {
-    JSONObject(text).toString(2)
+    JSONObject(text).toString(2).replace("\\/", "/")
 } catch (_: Exception) {
-    try { JSONArray(text).toString(2) } catch (_: Exception) { text }
+    try { JSONArray(text).toString(2).replace("\\/", "/") } catch (_: Exception) { text }
 }

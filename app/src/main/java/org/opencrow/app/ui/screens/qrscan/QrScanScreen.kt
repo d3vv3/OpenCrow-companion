@@ -21,6 +21,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import android.view.HapticFeedbackConstants
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.style.TextAlign
@@ -216,6 +217,7 @@ fun QrCameraPreview(scanning: Boolean, onQrDetected: (String) -> Unit) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val scanningState = rememberUpdatedState(scanning)
+    val view = androidx.compose.ui.platform.LocalView.current
 
     val reader = remember {
         MultiFormatReader().apply {
@@ -239,7 +241,10 @@ fun QrCameraPreview(scanning: Boolean, onQrDetected: (String) -> Unit) {
                         imageAnalysis.setAnalyzer(ContextCompat.getMainExecutor(ctx)) { imageProxy ->
                             if (scanningState.value) {
                                 val result = decodeQr(imageProxy, reader)
-                                if (result != null) onQrDetected(result)
+                                if (result != null) {
+                                    view.performHapticFeedback(HapticFeedbackConstants.CONFIRM)
+                                    onQrDetected(result)
+                                }
                             }
                             imageProxy.close()
                         }

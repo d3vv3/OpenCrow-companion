@@ -11,6 +11,7 @@ import androidx.room.PrimaryKey
 data class CachedToolCall(
     @PrimaryKey val id: String,
     val conversationId: String,
+    val messageId: String?,
     val toolName: String,
     val kind: String?,
     val arguments: String?,

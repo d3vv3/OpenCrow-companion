@@ -23,8 +23,8 @@ import java.util.concurrent.TimeUnit
 sealed class StreamEvent {
     data class Delta(val token: String) : StreamEvent()
     data class ToolCall(val name: String, val arguments: String, val kind: String) : StreamEvent()
-    data class ToolResult(val name: String, val result: String) : StreamEvent()
-    data class Done(val output: String) : StreamEvent()
+    data class ToolResult(val name: String, val result: String, val isError: Boolean = false) : StreamEvent()
+    data class Done(val output: String, val messageId: String? = null) : StreamEvent()
     data class Error(val error: String) : StreamEvent()
 }
 
@@ -140,12 +140,16 @@ class StreamingClient(private val apiClient: ApiClient) {
                     val map = parseMap(data)
                     StreamEvent.ToolResult(
                         name = map["name"] as? String ?: "",
-                        result = map["result"] as? String ?: ""
+                        result = map["result"] as? String ?: "",
+                        isError = map["isError"] == "true"
                     )
                 }
                 "done" -> {
                     val map = parseMap(data)
-                    StreamEvent.Done(map["output"] as? String ?: "")
+                    StreamEvent.Done(
+                        output = map["output"] as? String ?: "",
+                        messageId = map["messageId"] as? String ?: map["message_id"] as? String
+                    )
                 }
                 "error" -> {
                     val map = parseMap(data)

@@ -51,6 +51,7 @@ private val mapType = object : TypeToken<Map<String, Any>>() {}.type
 fun ToolCallRecordDto.toCached(conversationId: String) = CachedToolCall(
     id = id,
     conversationId = conversationId,
+    messageId = messageId,
     toolName = toolName,
     kind = kind,
     arguments = arguments?.let { gson.toJson(it) },
@@ -62,6 +63,7 @@ fun ToolCallRecordDto.toCached(conversationId: String) = CachedToolCall(
 
 fun CachedToolCall.toRecordDto() = ToolCallRecordDto(
     id = id,
+    messageId = messageId,
     toolName = toolName,
     kind = kind,
     arguments = arguments?.let { runCatching { gson.fromJson<Map<String, Any>>(it, mapType) }.getOrNull() },
