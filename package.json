@@ -1,0 +1,21 @@
+{
+  "name": "opencrow-companion",
+  "version": "0.1.0",
+  "description": "OpenCrow companion Android app",
+  "type": "module",
+  "scripts": {
+    "release": "semantic-release"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/d3vv3/openCrow-companion.git"
+  },
+  "devDependencies": {
+    "@semantic-release/changelog": "^6.0.3",
+    "@semantic-release/commit-analyzer": "^13.0.0",
+    "@semantic-release/git": "^10.0.1",
+    "@semantic-release/github": "^10.1.7",
+    "@semantic-release/release-notes-generator": "^14.0.1",
+    "semantic-release": "^24.1.0"
+  }
+}
