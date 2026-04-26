@@ -1,7 +1,6 @@
 package org.opencrow.app.data.local
 
 import android.Manifest
-import android.app.AlarmManager
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
@@ -60,9 +59,12 @@ class LocalToolExecutor(
      * Use this for the live SSE path where the server is waiting for the result.
      */
     suspend fun execute(callId: String, toolName: String, args: Map<String, Any>) {
+        Log.d(TAG, "▶ execute() callId=$callId toolName=$toolName args=$args")
         val result = executeLocal(toolName, args)
+        Log.d(TAG, "◀ execute() result: output=${result.output} isError=${result.isError}")
         try {
             apiClient.api.postToolResult(callId, ToolResultRequest(result.output, result.isError))
+            Log.d(TAG, ":white_check_mark: postToolResult succeeded for callId=$callId")
         } catch (e: Exception) {
             Log.e(TAG, "Failed to post tool result for callId=$callId", e)
         }
@@ -76,6 +78,7 @@ class LocalToolExecutor(
     suspend fun executeLocal(toolName: String, args: Map<String, Any>): ToolResult {
         // Strip on_device_ prefix so implementations don't need to know about it
         val name = toolName.removePrefix("on_device_")
+        Log.d(TAG, "▶ executeLocal() toolName=$toolName -> name=$name args=$args")
         val result = try {
             when (name) {
                 "set_alarm"             -> setAlarm(args)
@@ -101,6 +104,7 @@ class LocalToolExecutor(
                 "toggle_flashlight"     -> toggleFlashlight(args)
                 "media_control"         -> mediaControl(args)
                 "start_timer"           -> startTimer(args)
+                "start_stopwatch"       -> startStopwatch()
                 else                    -> ToolResult(output = "Unknown local tool: $toolName", isError = true)
             }
         } catch (e: Exception) {
@@ -108,6 +112,7 @@ class LocalToolExecutor(
             ToolResult(output = e.message ?: "Unexpected error", isError = true)
         }
 
+        Log.d(TAG, "◀ executeLocal() name=$name result: output=${result.output} isError=${result.isError}")
         return result
     }
 
@@ -122,47 +127,59 @@ class LocalToolExecutor(
     // ─── Tool Implementations ────────────────────────────────────────────────
 
     private fun setAlarm(args: Map<String, Any>): ToolResult {
+        Log.d(TAG, "setAlarm() called with args=$args")
+
         val hour   = (args["hour"] as? Double)?.toInt() ?: (args["hour"] as? Long)?.toInt()
-            ?: return ToolResult(output = "Missing required argument: hour", isError = true)
+            ?: return ToolResult(output = "Missing required argument: hour", isError = true).also {
+                Log.e(TAG, "setAlarm() ERROR: missing hour. args=$args")
+            }
         val minute = (args["minute"] as? Double)?.toInt() ?: (args["minute"] as? Long)?.toInt() ?: 0
         val label  = args["label"] as? String ?: "Alarm"
 
+        // Parse optional days-of-week list for recurring alarms.
+        // Accepts a JSON array of strings: ["monday", "tuesday", ...] or ["mon", "tue", ...]
+        val dayNameToCalendar = mapOf(
+            "sunday"    to Calendar.SUNDAY,    "sun" to Calendar.SUNDAY,
+            "monday"    to Calendar.MONDAY,    "mon" to Calendar.MONDAY,
+            "tuesday"   to Calendar.TUESDAY,   "tue" to Calendar.TUESDAY,
+            "wednesday" to Calendar.WEDNESDAY, "wed" to Calendar.WEDNESDAY,
+            "thursday"  to Calendar.THURSDAY,  "thu" to Calendar.THURSDAY,
+            "friday"    to Calendar.FRIDAY,    "fri" to Calendar.FRIDAY,
+            "saturday"  to Calendar.SATURDAY,  "sat" to Calendar.SATURDAY,
+        )
+        @Suppress("UNCHECKED_CAST")
+        val rawDays = args["days"] as? List<*>
+        val calendarDays: ArrayList<Int>? = rawDays
+            ?.mapNotNull { dayNameToCalendar[(it as? String)?.lowercase()] }
+            ?.takeIf { it.isNotEmpty() }
+            ?.let { ArrayList(it) }
+
+        Log.d(TAG, "setAlarm() parsed: hour=$hour minute=$minute label=$label days=$calendarDays")
+
         return try {
-            val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
-
-            // Compute next occurrence of hour:minute (today if still in future, tomorrow otherwise)
-            val trigger = Calendar.getInstance().apply {
-                set(Calendar.HOUR_OF_DAY, hour)
-                set(Calendar.MINUTE, minute)
-                set(Calendar.SECOND, 0)
-                set(Calendar.MILLISECOND, 0)
-                if (timeInMillis <= System.currentTimeMillis()) {
-                    add(Calendar.DAY_OF_YEAR, 1)
+            // Use AlarmClock.ACTION_SET_ALARM so the system Clock app handles the alarm --
+            // proper ringtone, visible in alarm list, survives reboots and app reinstalls.
+            // (Same pattern as startTimer which uses ACTION_SET_TIMER.)
+            val intent = Intent(android.provider.AlarmClock.ACTION_SET_ALARM).apply {
+                putExtra(android.provider.AlarmClock.EXTRA_HOUR, hour)
+                putExtra(android.provider.AlarmClock.EXTRA_MINUTES, minute)
+                putExtra(android.provider.AlarmClock.EXTRA_MESSAGE, label)
+                putExtra(android.provider.AlarmClock.EXTRA_SKIP_UI, true)
+                if (calendarDays != null) {
+                    putIntegerArrayListExtra(android.provider.AlarmClock.EXTRA_DAYS, calendarDays)
                 }
-            }.timeInMillis
-
-            // Use the label as a unique request code (hash) so different alarms don't cancel each other
-            val requestCode = (label + hour + minute).hashCode()
-            val receiverIntent = Intent(context, AlarmReceiver::class.java).apply {
-                putExtra(AlarmReceiver.EXTRA_LABEL, label)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             }
-            val pendingIntent = PendingIntent.getBroadcast(
-                context,
-                requestCode,
-                receiverIntent,
-                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-            )
-
-            // On API 31+ check if we have exact alarm permission; fall back to inexact if not
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && !alarmManager.canScheduleExactAlarms()) {
-                alarmManager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, trigger, pendingIntent)
-            } else {
-                alarmManager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, trigger, pendingIntent)
-            }
-
+            Log.d(TAG, "setAlarm() firing ACTION_SET_ALARM intent hour=$hour minute=$minute label=$label days=$calendarDays skipUI=true")
+            context.startActivity(intent)
             val timeStr = "%02d:%02d".format(hour, minute)
-            ToolResult(output = "Alarm set for $timeStr${if (label != "Alarm") " -- $label" else ""}")
+            val dayNames = rawDays?.filterIsInstance<String>()?.joinToString(", ")
+            val recurStr = if (dayNames != null) " every $dayNames" else ""
+            val msg = "Alarm set for $timeStr$recurStr${if (label != "Alarm") " -- $label" else ""}"
+            Log.d(TAG, "setAlarm() SUCCESS: $msg")
+            ToolResult(output = msg)
         } catch (e: Exception) {
+            Log.e(TAG, "setAlarm() EXCEPTION", e)
             ToolResult(output = "Failed to set alarm: ${e.message}", isError = true)
         }
     }
@@ -744,6 +761,29 @@ class LocalToolExecutor(
         } catch (e: Exception) {
             ToolResult(output = "Failed to start timer: ${e.message}", isError = true)
         }
+    }
+
+    private fun startStopwatch(): ToolResult {
+        // Try standard SET_STOPWATCH intent first (supported by some clock apps)
+        val intentsToTry = listOf(
+            Intent("android.intent.action.SET_STOPWATCH"),
+            // Google DeskClock doesn't handle SET_STOPWATCH; fall back to opening the clock app directly
+            Intent(android.provider.AlarmClock.ACTION_SHOW_ALARMS).apply {
+                `package` = "com.google.android.deskclock"
+            },
+            // Last resort: open whatever clock app handles SHOW_ALARMS
+            Intent(android.provider.AlarmClock.ACTION_SHOW_ALARMS)
+        )
+        for (intent in intentsToTry) {
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            try {
+                context.startActivity(intent)
+                return ToolResult(output = "Stopwatch opened")
+            } catch (_: android.content.ActivityNotFoundException) {
+                // Try next
+            }
+        }
+        return ToolResult(output = "No clock app found to open stopwatch", isError = true)
     }
 
     // ─── Notification channels ───────────────────────────────────────────────

@@ -7,6 +7,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.os.Build
+import android.util.Log
 import androidx.core.app.NotificationCompat
 import org.opencrow.app.R
 
@@ -19,10 +20,12 @@ class AlarmReceiver : BroadcastReceiver() {
     companion object {
         const val EXTRA_LABEL = "alarm_label"
         private const val CHANNEL_ID = "opencrow_alarms"
+        private const val TAG = "AlarmReceiver"
     }
 
     override fun onReceive(context: Context, intent: Intent) {
         val label = intent.getStringExtra(EXTRA_LABEL) ?: "Alarm"
+        Log.d(TAG, "onReceive() fired! label=$label intent=$intent")
         val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -50,5 +53,6 @@ class AlarmReceiver : BroadcastReceiver() {
             .build()
 
         nm.notify(label.hashCode(), notification)
+        Log.d(TAG, "onReceive() notification posted for label=$label notifId=${label.hashCode()}")
     }
 }

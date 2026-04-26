@@ -1,6 +1,7 @@
 package org.opencrow.app.ui.screens.chat
 
 import android.content.Context
+import android.media.MediaPlayer
 import android.media.MediaRecorder
 import android.net.Uri
 import android.os.Build
@@ -9,6 +10,7 @@ import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -76,7 +78,9 @@ data class ChatUiState(
     val toolCallsByMessageId: Map<String, List<ToolCallDto>> = emptyMap(),
     val attachments: List<Attachment> = emptyList(),
     val attachmentsByMessageId: Map<String, List<Attachment>> = emptyMap(),
-    val pendingPermission: String? = null
+    val pendingPermission: String? = null,
+    val ttsEnabled: Boolean = false,
+    val ttsAvailable: Boolean = false
 )
 
 class ChatViewModel(
@@ -94,6 +98,7 @@ class ChatViewModel(
 
     private var mediaRecorder: MediaRecorder? = null
     private var audioFile: File? = null
+    private var mediaPlayer: MediaPlayer? = null
 
     /**
      * Accumulates streaming tokens without copying the entire messages list
@@ -129,6 +134,21 @@ class ChatViewModel(
         loadConversations()
         observeRefreshSignal()
         observeActiveStream()
+        pollTtsStatus()
+    }
+
+    private fun pollTtsStatus() {
+        viewModelScope.launch {
+            while (true) {
+                try {
+                    val resp = repository.checkTtsStatus()
+                    _uiState.update { it.copy(ttsAvailable = resp) }
+                } catch (_: Exception) {
+                    _uiState.update { it.copy(ttsAvailable = false) }
+                }
+                delay(10_000L)
+            }
+        }
     }
 
     private fun observeActiveStream() {
@@ -792,6 +812,9 @@ class ChatViewModel(
                                      }.sortedByDescending { it.updatedAt }
                                  )
                              }
+                             if (_uiState.value.ttsEnabled && event.output.isNotBlank()) {
+                                 speakText(event.output)
+                             }
                          }
                         is StreamEvent.Error -> {
                             Log.e(TAG, "Stream error: ${event.error}")
@@ -905,6 +928,31 @@ class ChatViewModel(
         }
     }
 
+    fun toggleTts() {
+        _uiState.update { it.copy(ttsEnabled = !it.ttsEnabled) }
+    }
+
+    fun speakText(text: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val bytes = repository.synthesizeSpeech(text) ?: return@launch
+                val tmpFile = File(appContext.cacheDir, "tts_${System.currentTimeMillis()}.mp3")
+                tmpFile.writeBytes(bytes)
+                withContext(Dispatchers.Main) {
+                    mediaPlayer?.release()
+                    mediaPlayer = MediaPlayer().apply {
+                        setDataSource(tmpFile.absolutePath)
+                        prepare()
+                        start()
+                        setOnCompletionListener { tmpFile.delete() }
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "TTS playback failed", e)
+            }
+        }
+    }
+
     fun startRecording(context: Context) {
         val file = File(context.cacheDir, "voice_${System.currentTimeMillis()}.m4a")
         audioFile = file
@@ -965,6 +1013,9 @@ class ChatViewModel(
         super.onCleared()
         try {
             mediaRecorder?.release()
+        } catch (_: Exception) {}
+        try {
+            mediaPlayer?.release()
         } catch (_: Exception) {}
     }
 

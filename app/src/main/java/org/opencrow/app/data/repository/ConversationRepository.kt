@@ -166,4 +166,24 @@ class ConversationRepository(
             null
         }
     }
+
+    suspend fun synthesizeSpeech(text: String, voice: String = "af_heart"): ByteArray? {
+        return try {
+            val resp = apiClient.api.tts(org.opencrow.app.data.remote.dto.TtsRequest(text, voice))
+            if (resp.isSuccessful) resp.body()?.bytes() else null
+        } catch (e: Exception) {
+            Log.e(TAG, "TTS failed", e)
+            null
+        }
+    }
+
+    suspend fun checkTtsStatus(): Boolean {
+        return try {
+            val resp = apiClient.api.ttsStatus()
+            resp.isSuccessful && resp.body()?.get("status") == "ok"
+        } catch (e: Exception) {
+            Log.e(TAG, "TTS status check failed", e)
+            false
+        }
+    }
 }

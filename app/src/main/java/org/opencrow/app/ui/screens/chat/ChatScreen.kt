@@ -23,6 +23,7 @@ import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -255,20 +256,40 @@ fun ChatScreen(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Surface(
-                    onClick = { viewModel.toggleHistory(true) },
-                    shape = CircleShape,
-                    color = MaterialTheme.colorScheme.surfaceContainerHighest,
-                    shadowElevation = 6.dp,
-                    modifier = Modifier.size(44.dp)
-                ) {
-                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        Icon(
-                            Icons.Default.Menu,
-                            contentDescription = "Chat history",
-                            tint = MaterialTheme.colorScheme.onSurface,
-                            modifier = Modifier.size(20.dp)
-                        )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Surface(
+                        onClick = { viewModel.toggleHistory(true) },
+                        shape = CircleShape,
+                        color = MaterialTheme.colorScheme.surfaceContainerHighest,
+                        shadowElevation = 6.dp,
+                        modifier = Modifier.size(44.dp)
+                    ) {
+                        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            Icon(
+                                Icons.Default.Menu,
+                                contentDescription = "Chat history",
+                                tint = MaterialTheme.colorScheme.onSurface,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                    }
+                    Surface(
+                        onClick = { viewModel.toggleTts() },
+                        shape = CircleShape,
+                        color = if (state.ttsEnabled) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerHighest,
+                        shadowElevation = 6.dp,
+                        modifier = Modifier
+                            .size(44.dp)
+                            .then(if (!state.ttsAvailable) Modifier.alpha(0.38f) else Modifier)
+                    ) {
+                        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            Icon(
+                                if (state.ttsEnabled) Icons.Filled.VolumeUp else Icons.Outlined.VolumeOff,
+                                contentDescription = if (state.ttsEnabled) "Disable TTS" else "Enable TTS",
+                                tint = if (state.ttsEnabled) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
                     }
                 }
                 if (hasActiveChat) {

@@ -12,13 +12,18 @@ object LocalToolCapabilities {
     val all: List<DeviceCapability> = listOf(
         DeviceCapability(
             name = "set_alarm",
-            description = "Set a one-time alarm on the user's phone",
+            description = "Set an alarm on the user's phone. Supports one-time or recurring alarms (e.g. every weekday).",
             parameters = mapOf(
                 "type" to "object",
                 "properties" to mapOf(
                     "hour"   to mapOf("type" to "integer", "description" to "Hour in 24h format (0-23)"),
                     "minute" to mapOf("type" to "integer", "description" to "Minute (0-59), defaults to 0"),
-                    "label"  to mapOf("type" to "string",  "description" to "Optional alarm label")
+                    "label"  to mapOf("type" to "string",  "description" to "Optional alarm label"),
+                    "days"   to mapOf(
+                        "type" to "array",
+                        "items" to mapOf("type" to "string"),
+                        "description" to "Days of the week for a recurring alarm. Values: 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'. Omit for a one-time alarm."
+                    )
                 ),
                 "required" to listOf("hour")
             )
@@ -272,6 +277,15 @@ object LocalToolCapabilities {
                     "label"   to mapOf("type" to "string",  "description" to "Optional label for the timer")
                 ),
                 "required" to listOf("seconds")
+            )
+        ),
+        DeviceCapability(
+            name = "start_stopwatch",
+            description = "Start the stopwatch on the user's device",
+            parameters = mapOf(
+                "type" to "object",
+                "properties" to emptyMap<String, Any>(),
+                "required" to listOf<String>()
             )
         )
     )

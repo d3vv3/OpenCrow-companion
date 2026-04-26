@@ -90,3 +90,6 @@ data class ToolCallRecordDto(
 
 // ─── Transcription ───
 data class TranscribeResponse(val transcript: String)
+
+// ─── TTS ───
+data class TtsRequest(val text: String, val voice: String = "af_heart")

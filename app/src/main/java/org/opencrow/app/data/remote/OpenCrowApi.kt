@@ -1,6 +1,7 @@
 package org.opencrow.app.data.remote
 
 import okhttp3.MultipartBody
+import okhttp3.ResponseBody
 import org.opencrow.app.data.remote.dto.*
 import retrofit2.Response
 import retrofit2.http.*
@@ -56,6 +57,13 @@ interface OpenCrowApi {
     @Multipart
     @POST("v1/voice/transcribe")
     suspend fun transcribe(@Part audio: MultipartBody.Part): Response<TranscribeResponse>
+
+    @Streaming
+    @POST("v1/voice/tts")
+    suspend fun tts(@Body body: TtsRequest): Response<ResponseBody>
+
+    @GET("v1/voice/tts/status")
+    suspend fun ttsStatus(): Response<Map<String, String>>
 
     // ─── Devices ───
     @POST("v1/devices/{id}/register")
